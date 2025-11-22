@@ -20,6 +20,11 @@ extern "C" {
 #endif
 
 /**
+ * @brief SinricPro SDK version
+ */
+#define SINRICPRO_VERSION "1.0.1"
+
+/**
  * @brief SinricPro event base
  */
 ESP_EVENT_DECLARE_BASE(SINRICPRO_EVENT);

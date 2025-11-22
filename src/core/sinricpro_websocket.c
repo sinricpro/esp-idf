@@ -7,6 +7,7 @@
  */
 
 #include "sinricpro_websocket.h"
+#include "sinricpro.h"
 #include <string.h>
 #include <stdio.h>
 #include "esp_log.h"
@@ -154,8 +155,8 @@ esp_err_t sinricpro_ws_init(const char *server_url,
         "ip: %s\r\n"
         "mac: %s\r\n"
         "platform: esp-idf\r\n"
-        "SDKVersion: 1.0.1\r\n",
-        app_key, device_ids, ip_str, mac_str);
+        "SDKVersion: %s\r\n",
+        app_key, device_ids, ip_str, mac_str, SINRICPRO_VERSION);
 
     if (headers_len < 0 || headers == NULL) {
         ESP_LOGE(TAG, "Failed to build headers");

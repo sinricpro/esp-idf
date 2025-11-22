@@ -21,8 +21,6 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
-#define SINRICPRO_VERSION "1.0.0"
-
 static const char *TAG = "sinricpro_core";
 
 ESP_EVENT_DEFINE_BASE(SINRICPRO_EVENT);

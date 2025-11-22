@@ -31,7 +31,7 @@ Official ESP-IDF component for [SinricPro](https://sinric.pro) - Control your ES
 
 ## Requirements
 
-- ESP-IDF v4.4 or higher. Tested on ESP-IDF v6.1
+- ESP-IDF v4.4 or higher. Tested on ESP-IDF 6.1
 - ESP32, ESP32-S2, ESP32-S3, ESP32-C3, or ESP32-C6
 - SinricPro account ([sign up free](https://sinric.pro))
 
@@ -43,7 +43,7 @@ Add to your project's `idf_component.yml`:
 
 ```yaml
 dependencies:
-  sinricpro/esp-idf: "^1.0.1"
+  sinricpro/esp-idf: "^1.0.0"
 ```
 
 ### Method 2: Manual Installation
@@ -52,6 +52,8 @@ dependencies:
 cd your_project/components
 git clone https://github.com/sinricpro/esp-idf.git sinricpro
 ```
+
+View at: https://components.espressif.com/components/sinricpro/esp-idf
 
 ## Quick Start
 
