@@ -64,7 +64,7 @@ idf.py flash monitor
 ```
 I (XXX) switch_example: ==============================================
 I (XXX) switch_example:  SinricPro ESP-IDF Switch Example
-I (XXX) switch_example:  Version: 1.0.1
+I (XXX) switch_example:  Version: 1.0.0
 I (XXX) switch_example: ==============================================
 I (XXX) switch_example: Connecting to WiFi...
 I (XXX) switch_example: Got IP:192.168.1.100

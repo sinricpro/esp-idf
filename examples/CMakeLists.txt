@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Add the parent components directory so we can find sinricpro component
-# set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../components") # Enable when using for SDK development
+# set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../components") # Use in when developing the SDK
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(switch_example)
