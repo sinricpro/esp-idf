@@ -1,7 +1,9 @@
-cmake_minimum_required(VERSION 3.5)
+# The following lines of boilerplate have to be in your project's CMakeLists
+# in this exact order for cmake to work correctly
+cmake_minimum_required(VERSION 3.16)
+
+# Add the parent components directory so we can find sinricpro component
+# set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../../components") # Enable when using for SDK development
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-
-set(EXTRA_COMPONENT_DIRS ../../)
-
-project(sinricpro_switch_example)
+project(switch_example)

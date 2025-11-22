@@ -1,20 +1,22 @@
 idf_component_register(
-    SRCS 
-        "src/sinricpro.cpp"
-        "src/sinricpro_signature.cpp"
-        "src/sinricpro_websocket.cpp"
-        "src/sinricpro_device.cpp"
-        "src/sinricpro_switch.cpp"
-        "src/timestamp.cpp"
-    INCLUDE_DIRS 
+    SRCS
+        "src/core/sinricpro_core.c"
+        "src/core/sinricpro_websocket.c"
+        "src/core/sinricpro_signature.c"
+        "src/core/sinricpro_message_queue.c"
+        "src/core/sinricpro_event_limiter.c"
+        "src/devices/sinricpro_switch.c"
+        "src/capabilities/power_state_controller.c"
+        "src/capabilities/setting_controller.c"
+        "src/capabilities/push_notification.c"
+    INCLUDE_DIRS
         "include"
-    REQUIRES 
-        "nvs_flash"
-        "esp_http_client"
-        "esp_websocket_client"
-        "json"
-        "mbedtls"
-        "esp_wifi"
+    REQUIRES
+        esp_websocket_client
+        mbedtls
+        esp_event
+        nvs_flash
+        esp_netif
+        esp_wifi
+        cjson
 )
-
-target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-unused-variable -Wno-unused-but-set-variable)
