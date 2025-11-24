@@ -5,3 +5,4 @@ dependencies:
     version: "^1.2.0"
   espressif/cjson:
     version: "*"
+  sinricpro/esp-idf: ^1.0.1

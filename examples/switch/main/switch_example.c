@@ -1,5 +1,3 @@
-// pio run -t menuconfig
-
 /*
  * Copyright (c) 2019-2025 Sinric. All rights reserved.
  * Licensed under Creative Commons Attribution-Share Alike (CC BY-SA)

@@ -53,6 +53,12 @@ cd your_project/components
 git clone https://github.com/sinricpro/esp-idf.git sinricpro
 ```
 
+Or
+
+```bash
+idf.py add-dependency "sinricpro/esp-idf^1.0.1"
+```
+
 View at: https://components.espressif.com/components/sinricpro/esp-idf
 
 ## Quick Start
