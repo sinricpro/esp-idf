@@ -151,7 +151,6 @@ esp_err_t sinricpro_ws_init(const char *server_url,
     int headers_len = asprintf(&headers,
         "appkey: %s\r\n"
         "deviceids: %s\r\n"
-        "restoredevicestates: false\r\n"
         "ip: %s\r\n"
         "mac: %s\r\n"
         "platform: esp-idf\r\n"
