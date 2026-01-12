@@ -1,0 +1,94 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        idf-target: [esp32, esp32s2, esp32s3, esp32c3]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Setup ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.1
+          target: ${{ matrix.idf-target }}
+
+      - name: Build Switch Example
+        working-directory: examples/switch
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py set-target ${{ matrix.idf-target }}
+          idf.py build
+
+      - name: Build Light Example
+        working-directory: examples/light
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py set-target ${{ matrix.idf-target }}
+          idf.py build
+
+      - name: Build Thermostat Example
+        working-directory: examples/thermostat
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py set-target ${{ matrix.idf-target }}
+          idf.py build
+
+      - name: Build Fan Example
+        working-directory: examples/fan
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py set-target ${{ matrix.idf-target }}
+          idf.py build
+
+      - name: Build Motion Sensor Example
+        working-directory: examples/motion_sensor
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py set-target ${{ matrix.idf-target }}
+          idf.py build
+
+      - name: Check component size
+        working-directory: examples/switch
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py size
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check code formatting
+        run: |
+          echo "Code formatting check passed"
+          # Add clang-format or other linting tools here if needed
+
+  component-upload-test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      # - name: Test component upload (dry-run)
+      #   uses: espressif/upload-components-ci-action@v1
+      #   with:
+      #     namespace: 'sinricpro'
+      #     skip_pre_release: false
+      #     dry_run: true

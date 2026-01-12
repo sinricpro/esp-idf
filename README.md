@@ -3,6 +3,8 @@
 [![Platform](https://img.shields.io/badge/platform-ESP--IDF-blue.svg)](https://docs.espressif.com/projects/esp-idf/)
 [![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v4.4%2B%20%7C%20v5.x-green.svg)](https://github.com/espressif/esp-idf)
 [![License](https://img.shields.io/badge/license-CC%20BY--SA%204.0-orange.svg)](LICENSE)
+[![Build Status](https://github.com/sinricpro/esp-idf/workflows/Build%20and%20Test/badge.svg)](https://github.com/sinricpro/esp-idf/actions)
+[![Examples](https://img.shields.io/badge/examples-13-brightgreen.svg)](examples/)
 
 Official ESP-IDF component for [SinricPro](https://sinric.pro) - Control your ESP32 IoT devices with Alexa and Google Home.
 
@@ -19,15 +21,37 @@ Official ESP-IDF component for [SinricPro](https://sinric.pro) - Control your ES
 
 ## Supported Devices
 
-**Phase 1 (Current):**
-- ✅ Smart Switch - On/Off control
+All devices below have complete API support and working examples:
 
-**Coming Soon:**
-- 🔜 Smart Light - RGB color, brightness, color temperature
-- 🔜 Thermostat - Temperature control
-- 🔜 Fan - Speed control
-- 🔜 Lock - Lock/unlock control
-- 🔜 Sensors - Motion, contact, temperature, etc.
+### Simple Devices
+- ✅ **Switch** - Basic on/off control with physical button
+- ✅ **Motion Sensor** - PIR motion detection
+- ✅ **Contact Sensor** - Door/window reed switch detection
+
+### Lighting
+- ✅ **Smart Light** - RGB color, brightness, color temperature (2200-7000K)
+- ✅ **DimSwitch** - Dimmable switch with brightness control (0-100%)
+
+### Climate Control
+- ✅ **Thermostat** - HVAC control with AUTO/COOL/HEAT/ECO/OFF modes
+- ✅ **Fan** - Variable speed control (0-100%)
+- ✅ **Temperature Sensor** - DHT22/DHT11 temperature and humidity
+
+### Security & Access
+- ✅ **Lock** - Servo-based lock/unlock control
+- ✅ **Garage Door** - Relay control with position sensors
+
+### Home Automation
+- ✅ **Blinds** - Motorized blinds/curtains with position control (0-100%)
+
+### Media Devices
+- ✅ **TV** - Volume, mute, media control, input selection, channels
+- ✅ **Speaker** - Volume, mute, media control, equalizer, modes
+
+### Additional Devices (API Only)
+- ✅ Air Quality Sensor - PM1, PM2.5, PM10 measurements
+- ✅ Power Sensor - Voltage, current, power monitoring
+- ✅ Window AC - Air conditioner with fan speed and temperature
 
 ## Requirements
 
@@ -61,6 +85,33 @@ idf.py add-dependency "sinricpro/esp-idf^1.0.1"
 
 View at: https://components.espressif.com/components/sinricpro/esp-idf
 
+## Examples
+
+The component includes **13 complete working examples** demonstrating all device types and features:
+
+| Example | Description | Complexity | Hardware |
+|---------|-------------|------------|----------|
+| [Switch](examples/switch/) | Basic on/off control | ⭐ Simple | LED, Button |
+| [Light](examples/light/) | RGB LED with color & brightness | ⭐⭐⭐ Complex | RGB LED, PWM |
+| [DimSwitch](examples/dimswitch/) | Dimmable light control | ⭐⭐ Medium | LED, PWM |
+| [Motion Sensor](examples/motion_sensor/) | PIR motion detection | ⭐ Simple | PIR sensor |
+| [Contact Sensor](examples/contact_sensor/) | Door/window detection | ⭐ Simple | Reed switch |
+| [Temperature Sensor](examples/temperature_sensor/) | Temp & humidity monitoring | ⭐⭐ Medium | DHT22/DHT11 |
+| [Thermostat](examples/thermostat/) | HVAC climate control | ⭐⭐⭐ Complex | Relays, DHT22 |
+| [Lock](examples/lock/) | Smart lock control | ⭐⭐ Medium | Servo motor |
+| [Garage Door](examples/garage_door/) | Garage door automation | ⭐⭐⭐ Complex | Relay, Reed switches |
+| [Fan](examples/fan/) | Variable speed fan | ⭐⭐ Medium | DC motor, PWM |
+| [Blinds](examples/blinds/) | Motorized blinds/curtains | ⭐⭐⭐ Complex | DC motor, L298N |
+| [TV](examples/tv/) | Media control & channels | ⭐⭐⭐ Complex | Simulated/IR |
+| [Speaker](examples/speaker/) | Audio control & equalizer | ⭐⭐⭐ Complex | Simulated |
+
+Each example includes:
+- Complete working code
+- Wiring diagrams
+- Voice command examples
+- Hardware requirements
+- Step-by-step setup guide
+ 
 ## Quick Start
 
 ### 1. Get SinricPro Credentials
@@ -123,27 +174,18 @@ idf.py build
 idf.py flash monitor
 ```
 
-## License
-
-Copyright (c) 2019-2025 Sinric. All rights reserved.
-
-This component is licensed under the **Creative Commons Attribution-Share Alike 4.0 International License (CC BY-SA 4.0)**.
-
-You are free to:
-- Share and adapt this work for any purpose (including commercially)
-
-Under the following terms:
-- Give appropriate credit
-- Distribute your contributions under the same license
-
-See [LICENSE](LICENSE) file for details.
-
+### Reporting Issues
+- Check [existing issues](https://github.com/sinricpro/esp-idf/issues)
+- Include ESP-IDF version, chip type, and example name
+- Provide minimal reproduction code
+ 
 ## Support
 
 - **Documentation**: [help.sinric.pro](https://help.sinric.pro)
-- **Community**: [Discord](https://discord.gg/W5299EgB59)
-- **Issues**: [GitHub Issues](https://github.com/sinricpro/esp-idf/issues)
-- **Email**: support@sinric.pro
+- **Community**: [Discord](https://discord.gg/W5299EgB59) - Get help from the community
+- **Issues**: [GitHub Issues](https://github.com/sinricpro/esp-idf/issues) - Report bugs or request features
+- **Email**: support@sinric.pro - Direct support
+- **Examples**: All examples include detailed README files with troubleshooting
 
 ## Related Projects
 
