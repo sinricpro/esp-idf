@@ -21,7 +21,6 @@ typedef struct {
     sinricpro_device_t base;
     sinricpro_contact_sensor_handle_t contact_sensor;
     sinricpro_setting_controller_handle_t setting_controller;
-    sinricpro_push_notification_handle_t push_notification;
 } sinricpro_contact_sensor_device_t;
 
 static bool contact_sensor_request_handler(
@@ -36,7 +35,7 @@ static bool contact_sensor_request_handler(
 
     if (sinricpro_setting_controller_handle_request(dev->setting_controller,
                                                       device_id, action,
-                                                      instance_id, request_value,
+                                                      request_value,
                                                       response_value)) {
         return true;
     }
@@ -67,10 +66,8 @@ sinricpro_device_handle_t sinricpro_contact_sensor_create(const char *device_id)
 
     dev->contact_sensor = sinricpro_contact_sensor_create();
     dev->setting_controller = sinricpro_setting_controller_create();
-    dev->push_notification = sinricpro_push_notification_create();
 
-    if (dev->contact_sensor == NULL || dev->setting_controller == NULL ||
-        dev->push_notification == NULL) {
+    if (dev->contact_sensor == NULL || dev->setting_controller == NULL) {
         ESP_LOGE(TAG, "Failed to create capabilities");
         sinricpro_contact_sensor_delete((sinricpro_device_handle_t)dev);
         return NULL;
@@ -99,7 +96,6 @@ esp_err_t sinricpro_contact_sensor_delete(sinricpro_device_handle_t device)
 
     if (dev->contact_sensor) sinricpro_contact_sensor_destroy(dev->contact_sensor);
     if (dev->setting_controller) sinricpro_setting_controller_destroy(dev->setting_controller);
-    if (dev->push_notification) sinricpro_push_notification_destroy(dev->push_notification);
 
     free(dev);
     ESP_LOGI(TAG, "ContactSensor device deleted");
