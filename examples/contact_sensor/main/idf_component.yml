@@ -1,4 +1,4 @@
 dependencies:
   sinricpro/esp-idf:
     version: "*"
-    override_path: "../../"
+    override_path: "../../../"
