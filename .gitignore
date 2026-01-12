@@ -16,6 +16,7 @@ pytest_embedded_log/
 
 # idf-component-manager output
 dependencies.lock
+managed_components/
 
 dist
 

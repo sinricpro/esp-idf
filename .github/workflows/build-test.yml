@@ -21,6 +21,10 @@ jobs:
         with:
           submodules: 'recursive'
 
+      - name: Clean managed components
+        run: |
+          find . -type d -name "managed_components" -exec rm -rf {} + || true
+
       - name: Build Switch Example
         working-directory: examples/switch
         run: |
