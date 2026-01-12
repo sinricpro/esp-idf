@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.1
     strategy:
       matrix:
         idf-target: [esp32, esp32s2, esp32s3, esp32c3]
@@ -18,12 +20,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
-
-      - name: Setup ESP-IDF
-        uses: espressif/esp-idf-ci-action@v1
-        with:
-          esp_idf_version: v5.1
-          target: ${{ matrix.idf-target }}
 
       - name: Build Switch Example
         working-directory: examples/switch
