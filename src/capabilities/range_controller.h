@@ -10,14 +10,12 @@
 #define RANGE_CONTROLLER_H
 
 #include "sinricpro_types.h"
+#include "cJSON.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Forward declaration */
-typedef struct cJSON cJSON;
 
 /**
  * @brief Range value callback signature

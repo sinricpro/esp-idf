@@ -11,6 +11,7 @@
 
 #include "sinricpro_types.h"
 #include "sinricpro_thermostat.h"
+#include "cJSON.h"
 #include <stdint.h>
 
 #ifdef __cplusplus

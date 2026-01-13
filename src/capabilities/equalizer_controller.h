@@ -10,6 +10,7 @@
 #define EQUALIZER_CONTROLLER_H
 
 #include "sinricpro_types.h"
+#include "cJSON.h"
 #include <stdint.h>
 #include <stdbool.h>
 

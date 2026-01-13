@@ -10,6 +10,7 @@
 #define COLOR_CONTROLLER_H
 
 #include "sinricpro_types.h"
+#include "cJSON.h"
 #include <stdint.h>
 
 #ifdef __cplusplus

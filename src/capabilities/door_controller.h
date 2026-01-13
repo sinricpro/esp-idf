@@ -10,6 +10,7 @@
 #define DOOR_CONTROLLER_H
 
 #include "sinricpro_types.h"
+#include "cJSON.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
