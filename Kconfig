@@ -1,0 +1,107 @@
+menu "SinricPro Configuration"
+
+    config SINRICPRO_SERVER_URL
+        string "SinricPro Server URL"
+        default "ws.sinric.pro"
+        help
+            WebSocket server URL for SinricPro service.
+            Default is "ws.sinric.pro" (port 443 for wss).
+
+    config SINRICPRO_SERVER_PORT
+        int "SinricPro Server Port"
+        default 443
+        help
+            WebSocket server port for SinricPro service.
+            Use 443 for wss (secure WebSocket).
+
+    config SINRICPRO_WEBSOCKET_PATH
+        string "WebSocket Path"
+        default "/"
+        help
+            WebSocket path on the server.
+
+    config SINRICPRO_WEBSOCKET_TASK_STACK_SIZE
+        int "WebSocket task stack size"
+        default 8192
+        help
+            Stack size for the WebSocket handling task.
+            Increase if you see stack overflow errors.
+
+    config SINRICPRO_WEBSOCKET_TASK_PRIORITY
+        int "WebSocket task priority"
+        default 5
+        range 1 24
+        help
+            Priority of the WebSocket task.
+            Higher values = higher priority.
+
+    config SINRICPRO_CALLBACK_TASK_STACK_SIZE
+        int "Callback task stack size"
+        default 4096
+        help
+            Stack size for device callback execution task.
+
+    config SINRICPRO_CALLBACK_TASK_PRIORITY
+        int "Callback task priority"
+        default 4
+        range 1 24
+        help
+            Priority of the callback execution task.
+
+    config SINRICPRO_ENABLE_DEBUG
+        bool "Enable debug logging"
+        default n
+        help
+            Enable verbose debug logging for troubleshooting.
+
+    config SINRICPRO_EVENT_QUEUE_SIZE
+        int "Event queue size"
+        default 10
+        range 5 50
+        help
+            Maximum number of events that can be queued.
+
+    config SINRICPRO_MESSAGE_QUEUE_SIZE
+        int "Message queue size"
+        default 10
+        range 5 50
+        help
+            Maximum number of messages that can be queued
+            for sending.
+
+    config SINRICPRO_AUTO_RECONNECT
+        bool "Enable auto-reconnection"
+        default y
+        help
+            Automatically reconnect when connection is lost.
+
+    config SINRICPRO_RECONNECT_INTERVAL_MS
+        int "Reconnection interval (ms)"
+        default 5000
+        range 1000 60000
+        depends on SINRICPRO_AUTO_RECONNECT
+        help
+            Time to wait before attempting reconnection
+            after disconnection.
+
+    config SINRICPRO_MAX_DEVICES
+        int "Maximum number of devices"
+        default 10
+        range 1 50
+        help
+            Maximum number of devices that can be registered.
+
+    config SINRICPRO_MAX_DEVICE_ID_LEN
+        int "Maximum device ID length"
+        default 32
+        help
+            Maximum length of device ID string (including null terminator).
+
+    config SINRICPRO_HEARTBEAT_INTERVAL_MS
+        int "Heartbeat interval (ms)"
+        default 300000
+        range 60000 600000
+        help
+            Interval for sending heartbeat/ping messages to server.
+
+endmenu
