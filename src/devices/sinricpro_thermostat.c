@@ -25,16 +25,17 @@ typedef struct {
     sinricpro_thermostat_controller_handle_t thermostat_controller;
     sinricpro_temperature_sensor_handle_t temperature_sensor;
     sinricpro_setting_controller_handle_t setting_controller;
-    sinricpro_push_notification_handle_t push_notification;
 } sinricpro_thermostat_device_t;
 
 static bool thermostat_request_handler(
-    sinricpro_device_handle_t device,
+    const char *device_id,
     const char *action,
+    const char *instance_id,
     cJSON *request_value,
-    cJSON *response_value)
+    cJSON *response_value,
+    void *user_data)
 {
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
 
     if (sinricpro_power_state_controller_handle_request(
             dev->power_state_controller,
@@ -84,35 +85,35 @@ sinricpro_device_handle_t sinricpro_thermostat_create(const char *device_id)
 
     dev->power_state_controller = sinricpro_power_state_controller_create();
     dev->thermostat_controller = sinricpro_thermostat_controller_create();
-    dev->temperature_sensor = sinricpro_temperature_sensor_create();
+    dev->temperature_sensor = sinricpro_temperature_sensor_capability_create();
     dev->setting_controller = sinricpro_setting_controller_create();
-    dev->push_notification = sinricpro_push_notification_create();
 
     if (dev->power_state_controller == NULL ||
         dev->thermostat_controller == NULL ||
         dev->temperature_sensor == NULL ||
-        dev->setting_controller == NULL ||
-        dev->push_notification == NULL) {
+        dev->setting_controller == NULL) {
         ESP_LOGE(TAG, "Failed to create capabilities");
         if (dev->power_state_controller) sinricpro_power_state_controller_destroy(dev->power_state_controller);
         if (dev->thermostat_controller) sinricpro_thermostat_controller_destroy(dev->thermostat_controller);
         if (dev->temperature_sensor) sinricpro_temperature_sensor_destroy(dev->temperature_sensor);
         if (dev->setting_controller) sinricpro_setting_controller_destroy(dev->setting_controller);
-        if (dev->push_notification) sinricpro_push_notification_destroy(dev->push_notification);
         free(dev);
         return NULL;
     }
 
-    dev->base.device_id = device_id;
+    strncpy(dev->base.device_id, device_id, sizeof(dev->base.device_id) - 1);
     dev->base.request_handler = thermostat_request_handler;
+    dev->base.device_type = SINRICPRO_DEVICE_TYPE_THERMOSTAT;
+    dev->base.user_data = dev;
+    dev->base.next = NULL;
 
-    if (sinricpro_device_register((sinricpro_device_handle_t)dev) != ESP_OK) {
+    esp_err_t ret = sinricpro_core_register_device(&dev->base);
+    if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register thermostat device");
         sinricpro_power_state_controller_destroy(dev->power_state_controller);
         sinricpro_thermostat_controller_destroy(dev->thermostat_controller);
         sinricpro_temperature_sensor_destroy(dev->temperature_sensor);
         sinricpro_setting_controller_destroy(dev->setting_controller);
-        sinricpro_push_notification_destroy(dev->push_notification);
         free(dev);
         return NULL;
     }
@@ -130,7 +131,7 @@ esp_err_t sinricpro_thermostat_on_power_state(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_power_state_controller_set_callback(
         dev->power_state_controller,
         callback,
@@ -147,7 +148,7 @@ esp_err_t sinricpro_thermostat_on_thermostat_mode(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_thermostat_controller_set_mode_callback(
         dev->thermostat_controller,
         callback,
@@ -164,7 +165,7 @@ esp_err_t sinricpro_thermostat_on_target_temperature(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_thermostat_controller_set_target_temperature_callback(
         dev->thermostat_controller,
         callback,
@@ -181,7 +182,7 @@ esp_err_t sinricpro_thermostat_on_adjust_target_temperature(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_thermostat_controller_set_adjust_temperature_callback(
         dev->thermostat_controller,
         callback,
@@ -198,7 +199,7 @@ esp_err_t sinricpro_thermostat_send_power_state_event(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_power_state_controller_send_event(
         dev->power_state_controller,
         dev->base.device_id,
@@ -216,7 +217,7 @@ esp_err_t sinricpro_thermostat_send_mode_event(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_thermostat_controller_send_mode_event(
         dev->thermostat_controller,
         dev->base.device_id,
@@ -234,7 +235,7 @@ esp_err_t sinricpro_thermostat_send_target_temperature_event(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_thermostat_controller_send_target_temperature_event(
         dev->thermostat_controller,
         dev->base.device_id,
@@ -253,7 +254,7 @@ esp_err_t sinricpro_thermostat_send_temperature_event(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)device;
+    sinricpro_thermostat_device_t *dev = (sinricpro_thermostat_device_t *)user_data;
     return sinricpro_temperature_sensor_send_event(
         dev->temperature_sensor,
         dev->base.device_id,

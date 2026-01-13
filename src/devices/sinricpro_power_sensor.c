@@ -64,7 +64,7 @@ sinricpro_device_handle_t sinricpro_power_sensor_create(const char *device_id)
     dev->base.request_handler = power_sensor_request_handler;
     dev->base.user_data = dev;
 
-    dev->power_sensor = sinricpro_power_sensor_create();
+    dev->power_sensor = sinricpro_power_sensor_capability_create();
     dev->setting_controller = sinricpro_setting_controller_create();
 
     if (dev->power_sensor == NULL || dev->setting_controller == NULL) {

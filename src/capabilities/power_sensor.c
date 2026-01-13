@@ -10,6 +10,7 @@
 #include "../core/sinricpro_device_internal.h"
 #include "../core/sinricpro_event_limiter.h"
 #include "sinricpro_types.h"
+#include "sinricpro.h"
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
@@ -23,7 +24,7 @@ struct sinricpro_power_sensor {
     float last_power;
 };
 
-sinricpro_power_sensor_handle_t sinricpro_power_sensor_create(void)
+sinricpro_power_sensor_handle_t sinricpro_power_sensor_capability_create(void)
 {
     sinricpro_power_sensor_handle_t handle =
         malloc(sizeof(struct sinricpro_power_sensor));

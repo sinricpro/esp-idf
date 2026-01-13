@@ -10,36 +10,12 @@
 #define THERMOSTAT_CONTROLLER_H
 
 #include "sinricpro_types.h"
+#include "sinricpro_thermostat.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @brief Thermostat mode enum
- */
-typedef enum {
-    SINRICPRO_THERMOSTAT_MODE_AUTO,
-    SINRICPRO_THERMOSTAT_MODE_COOL,
-    SINRICPRO_THERMOSTAT_MODE_HEAT,
-    SINRICPRO_THERMOSTAT_MODE_ECO,
-    SINRICPRO_THERMOSTAT_MODE_OFF
-} sinricpro_thermostat_mode_t;
-
-/**
- * @brief Thermostat mode callback signature
- *
- * @param[in] device_id Device ID
- * @param[in,out] mode Pointer to thermostat mode
- * @param[in] user_data User data
- * @return true if successful, false on error
- */
-typedef bool (*sinricpro_thermostat_mode_callback_t)(
-    const char *device_id,
-    sinricpro_thermostat_mode_t *mode,
-    void *user_data
-);
 
 /**
  * @brief Target temperature callback signature

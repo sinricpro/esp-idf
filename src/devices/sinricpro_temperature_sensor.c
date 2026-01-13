@@ -64,7 +64,7 @@ sinricpro_device_handle_t sinricpro_temperature_sensor_create(const char *device
     dev->base.request_handler = temperature_sensor_request_handler;
     dev->base.user_data = dev;
 
-    dev->temperature_sensor = sinricpro_temperature_sensor_create();
+    dev->temperature_sensor = sinricpro_temperature_sensor_capability_create();
     dev->setting_controller = sinricpro_setting_controller_create();
 
     if (dev->temperature_sensor == NULL || dev->setting_controller == NULL) {

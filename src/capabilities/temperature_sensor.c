@@ -25,7 +25,7 @@ struct sinricpro_temperature_sensor {
     sinricpro_event_limiter_handle_t limiter;
 };
 
-sinricpro_temperature_sensor_handle_t sinricpro_temperature_sensor_create(void)
+sinricpro_temperature_sensor_handle_t sinricpro_temperature_sensor_capability_create(void)
 {
     sinricpro_temperature_sensor_handle_t handle =
         malloc(sizeof(struct sinricpro_temperature_sensor));

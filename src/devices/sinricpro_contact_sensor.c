@@ -64,7 +64,7 @@ sinricpro_device_handle_t sinricpro_contact_sensor_create(const char *device_id)
     dev->base.request_handler = contact_sensor_request_handler;
     dev->base.user_data = dev;
 
-    dev->contact_sensor = sinricpro_contact_sensor_create();
+    dev->contact_sensor = sinricpro_contact_sensor_capability_create();
     dev->setting_controller = sinricpro_setting_controller_create();
 
     if (dev->contact_sensor == NULL || dev->setting_controller == NULL) {

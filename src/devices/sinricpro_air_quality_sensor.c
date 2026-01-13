@@ -64,7 +64,7 @@ sinricpro_device_handle_t sinricpro_air_quality_sensor_create(const char *device
     dev->base.request_handler = air_quality_sensor_request_handler;
     dev->base.user_data = dev;
 
-    dev->air_quality_sensor = sinricpro_air_quality_sensor_create();
+    dev->air_quality_sensor = sinricpro_air_quality_sensor_capability_create();
     dev->setting_controller = sinricpro_setting_controller_create();
 
     if (dev->air_quality_sensor == NULL || dev->setting_controller == NULL) {

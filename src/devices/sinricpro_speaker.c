@@ -33,14 +33,15 @@ typedef struct {
     sinricpro_equalizer_controller_handle_t equalizer_controller;
     sinricpro_mode_controller_handle_t mode_controller;
     sinricpro_setting_controller_handle_t setting_controller;
-    sinricpro_push_notification_handle_t push_notification;
 } sinricpro_speaker_device_t;
 
 static bool speaker_request_handler(
-    sinricpro_device_handle_t device,
+    const char *device_id,
     const char *action,
+    const char *instance_id,
     cJSON *request_value,
-    cJSON *response_value)
+    cJSON *response_value,
+    void *user_data)
 {
     sinricpro_speaker_device_t *dev = (sinricpro_speaker_device_t *)device;
 
@@ -111,11 +112,10 @@ sinricpro_device_handle_t sinricpro_speaker_create(const char *device_id)
     dev->equalizer_controller = sinricpro_equalizer_controller_create();
     dev->mode_controller = sinricpro_mode_controller_create();
     dev->setting_controller = sinricpro_setting_controller_create();
-    dev->push_notification = sinricpro_push_notification_create();
 
     if (!dev->power_state_controller || !dev->volume_controller || !dev->mute_controller ||
         !dev->media_controller || !dev->input_controller || !dev->equalizer_controller ||
-        !dev->mode_controller || !dev->setting_controller || !dev->push_notification) {
+        !dev->mode_controller || !dev->setting_controller) {
         ESP_LOGE(TAG, "Failed to create capabilities");
         if (dev->power_state_controller) sinricpro_power_state_controller_destroy(dev->power_state_controller);
         if (dev->volume_controller) sinricpro_volume_controller_destroy(dev->volume_controller);
@@ -125,15 +125,18 @@ sinricpro_device_handle_t sinricpro_speaker_create(const char *device_id)
         if (dev->equalizer_controller) sinricpro_equalizer_controller_destroy(dev->equalizer_controller);
         if (dev->mode_controller) sinricpro_mode_controller_destroy(dev->mode_controller);
         if (dev->setting_controller) sinricpro_setting_controller_destroy(dev->setting_controller);
-        if (dev->push_notification) sinricpro_push_notification_destroy(dev->push_notification);
         free(dev);
         return NULL;
     }
 
-    dev->base.device_id = device_id;
+    strncpy(dev->base.device_id, device_id, sizeof(dev->base.device_id) - 1);
     dev->base.request_handler = speaker_request_handler;
+    dev->base.device_type = SINRICPRO_DEVICE_TYPE_SPEAKER;
+    dev->base.user_data = dev;
+    dev->base.next = NULL;
 
-    if (sinricpro_device_register((sinricpro_device_handle_t)dev) != ESP_OK) {
+    esp_err_t ret = sinricpro_core_register_device(&dev->base);
+    if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register Speaker device");
         sinricpro_power_state_controller_destroy(dev->power_state_controller);
         sinricpro_volume_controller_destroy(dev->volume_controller);
@@ -143,7 +146,6 @@ sinricpro_device_handle_t sinricpro_speaker_create(const char *device_id)
         sinricpro_equalizer_controller_destroy(dev->equalizer_controller);
         sinricpro_mode_controller_destroy(dev->mode_controller);
         sinricpro_setting_controller_destroy(dev->setting_controller);
-        sinricpro_push_notification_destroy(dev->push_notification);
         free(dev);
         return NULL;
     }

@@ -26,7 +26,7 @@ typedef struct sinricpro_contact_sensor* sinricpro_contact_sensor_handle_t;
  *
  * @return Sensor handle, or NULL on failure
  */
-sinricpro_contact_sensor_handle_t sinricpro_contact_sensor_create(void);
+sinricpro_contact_sensor_handle_t sinricpro_contact_sensor_capability_create(void);
 
 /**
  * @brief Send contact detection event

@@ -75,7 +75,7 @@ sinricpro_device_handle_t sinricpro_motion_sensor_create(const char *device_id)
     dev->base.user_data = dev;
 
     /* Create capabilities */
-    dev->motion_sensor = sinricpro_motion_sensor_create();
+    dev->motion_sensor = sinricpro_motion_sensor_capability_create();
     dev->setting_controller = sinricpro_setting_controller_create();
 
     if (dev->motion_sensor == NULL || dev->setting_controller == NULL) {

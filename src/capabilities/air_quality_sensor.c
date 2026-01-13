@@ -21,7 +21,7 @@ struct sinricpro_air_quality_sensor {
     sinricpro_event_limiter_handle_t limiter;
 };
 
-sinricpro_air_quality_sensor_handle_t sinricpro_air_quality_sensor_create(void)
+sinricpro_air_quality_sensor_handle_t sinricpro_air_quality_sensor_capability_create(void)
 {
     sinricpro_air_quality_sensor_handle_t handle =
         malloc(sizeof(struct sinricpro_air_quality_sensor));

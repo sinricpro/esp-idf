@@ -18,7 +18,7 @@ extern "C" {
 
 typedef struct sinricpro_power_sensor* sinricpro_power_sensor_handle_t;
 
-sinricpro_power_sensor_handle_t sinricpro_power_sensor_create(void);
+sinricpro_power_sensor_handle_t sinricpro_power_sensor_capability_create(void);
 
 esp_err_t sinricpro_power_sensor_send_event(
     sinricpro_power_sensor_handle_t handle,

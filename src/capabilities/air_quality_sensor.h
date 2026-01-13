@@ -18,7 +18,7 @@ extern "C" {
 
 typedef struct sinricpro_air_quality_sensor* sinricpro_air_quality_sensor_handle_t;
 
-sinricpro_air_quality_sensor_handle_t sinricpro_air_quality_sensor_create(void);
+sinricpro_air_quality_sensor_handle_t sinricpro_air_quality_sensor_capability_create(void);
 
 esp_err_t sinricpro_air_quality_sensor_send_event(
     sinricpro_air_quality_sensor_handle_t handle,

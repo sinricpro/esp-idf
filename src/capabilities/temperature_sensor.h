@@ -26,7 +26,7 @@ typedef struct sinricpro_temperature_sensor* sinricpro_temperature_sensor_handle
  *
  * @return Sensor handle, or NULL on failure
  */
-sinricpro_temperature_sensor_handle_t sinricpro_temperature_sensor_create(void);
+sinricpro_temperature_sensor_handle_t sinricpro_temperature_sensor_capability_create(void);
 
 /**
  * @brief Send temperature reading event

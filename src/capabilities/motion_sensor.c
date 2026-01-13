@@ -24,7 +24,7 @@ struct sinricpro_motion_sensor {
     sinricpro_event_limiter_handle_t limiter;
 };
 
-sinricpro_motion_sensor_handle_t sinricpro_motion_sensor_create(void)
+sinricpro_motion_sensor_handle_t sinricpro_motion_sensor_capability_create(void)
 {
     sinricpro_motion_sensor_handle_t handle =
         malloc(sizeof(struct sinricpro_motion_sensor));

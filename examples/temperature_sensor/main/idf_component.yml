@@ -1,5 +1,5 @@
 dependencies:
-  sinricpro/esp-idf:
+#  sinricpro/esp-idf:
     version: "*"
     override_path: "../../../"
   # Uncomment to use real DHT sensor library

@@ -23,16 +23,17 @@ typedef struct {
     sinricpro_power_state_controller_handle_t power_state_controller;
     sinricpro_range_controller_handle_t range_controller;
     sinricpro_setting_controller_handle_t setting_controller;
-    sinricpro_push_notification_handle_t push_notification;
 } sinricpro_blinds_device_t;
 
 static bool blinds_request_handler(
-    sinricpro_device_handle_t device,
+    const char *device_id,
     const char *action,
+    const char *instance_id,
     cJSON *request_value,
-    cJSON *response_value)
+    cJSON *response_value,
+    void *user_data)
 {
-    sinricpro_blinds_device_t *dev = (sinricpro_blinds_device_t *)device;
+    sinricpro_blinds_device_t *dev = (sinricpro_blinds_device_t *)user_data;
 
     if (sinricpro_power_state_controller_handle_request(
             dev->power_state_controller,
@@ -83,30 +84,30 @@ sinricpro_device_handle_t sinricpro_blinds_create(const char *device_id)
     dev->power_state_controller = sinricpro_power_state_controller_create();
     dev->range_controller = sinricpro_range_controller_create();
     dev->setting_controller = sinricpro_setting_controller_create();
-    dev->push_notification = sinricpro_push_notification_create();
 
     if (dev->power_state_controller == NULL ||
         dev->range_controller == NULL ||
-        dev->setting_controller == NULL ||
-        dev->push_notification == NULL) {
+        dev->setting_controller == NULL) {
         ESP_LOGE(TAG, "Failed to create capabilities");
         if (dev->power_state_controller) sinricpro_power_state_controller_destroy(dev->power_state_controller);
         if (dev->range_controller) sinricpro_range_controller_destroy(dev->range_controller);
         if (dev->setting_controller) sinricpro_setting_controller_destroy(dev->setting_controller);
-        if (dev->push_notification) sinricpro_push_notification_destroy(dev->push_notification);
         free(dev);
         return NULL;
     }
 
-    dev->base.device_id = device_id;
+    strncpy(dev->base.device_id, device_id, sizeof(dev->base.device_id) - 1);
+    dev->base.device_type = SINRICPRO_DEVICE_TYPE_BLINDS;
     dev->base.request_handler = blinds_request_handler;
+    dev->base.user_data = dev;
+    dev->base.next = NULL;
 
-    if (sinricpro_device_register((sinricpro_device_handle_t)dev) != ESP_OK) {
+    esp_err_t ret = sinricpro_core_register_device(&dev->base);
+    if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register blinds device");
         sinricpro_power_state_controller_destroy(dev->power_state_controller);
         sinricpro_range_controller_destroy(dev->range_controller);
         sinricpro_setting_controller_destroy(dev->setting_controller);
-        sinricpro_push_notification_destroy(dev->push_notification);
         free(dev);
         return NULL;
     }

@@ -26,7 +26,7 @@ typedef struct sinricpro_motion_sensor* sinricpro_motion_sensor_handle_t;
  *
  * @return Controller handle, or NULL on failure
  */
-sinricpro_motion_sensor_handle_t sinricpro_motion_sensor_create(void);
+sinricpro_motion_sensor_handle_t sinricpro_motion_sensor_capability_create(void);
 
 /**
  * @brief Send motion detection event
