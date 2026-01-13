@@ -16,6 +16,9 @@
 extern "C" {
 #endif
 
+/* Forward declaration */
+typedef struct cJSON cJSON;
+
 /**
  * @brief Color temperature callback signature
  *
