@@ -43,7 +43,7 @@ static bool speaker_request_handler(
     cJSON *response_value,
     void *user_data)
 {
-    sinricpro_speaker_device_t *dev = (sinricpro_speaker_device_t *)device;
+    sinricpro_speaker_device_t *dev = (sinricpro_speaker_device_t *)user_data;
 
     if (sinricpro_power_state_controller_handle_request(
             dev->power_state_controller, dev->base.device_id, action, request_value, response_value)) {
