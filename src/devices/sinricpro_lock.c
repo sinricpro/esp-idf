@@ -43,7 +43,7 @@ static bool lock_request_handler(
     /* Try setting controller */
     if (sinricpro_setting_controller_handle_request(dev->setting_controller,
                                                       device_id, action,
-                                                      instance_id, request_value,
+                                                      request_value,
                                                       response_value)) {
         return true;
     }
@@ -98,7 +98,7 @@ esp_err_t sinricpro_lock_delete(sinricpro_device_handle_t device)
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_lock_device_t *dev = (sinricpro_lock_device_t *)user_data;
+    sinricpro_lock_device_t *dev = (sinricpro_lock_device_t *)device;
 
     sinricpro_core_unregister_device(dev->base.device_id);
 
@@ -119,7 +119,7 @@ esp_err_t sinricpro_lock_on_lock_state(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_lock_device_t *dev = (sinricpro_lock_device_t *)user_data;
+    sinricpro_lock_device_t *dev = (sinricpro_lock_device_t *)device;
     return sinricpro_lock_controller_set_callback(dev->lock_controller, callback, user_data);
 }
 
@@ -132,7 +132,7 @@ esp_err_t sinricpro_lock_send_lock_state_event(
         return ESP_ERR_INVALID_ARG;
     }
 
-    sinricpro_lock_device_t *dev = (sinricpro_lock_device_t *)user_data;
+    sinricpro_lock_device_t *dev = (sinricpro_lock_device_t *)device;
     return sinricpro_lock_controller_send_event(dev->lock_controller,
                                                   dev->base.device_id,
                                                   state,
