@@ -52,7 +52,7 @@ static EventGroupHandle_t s_wifi_event_group;
 /* Light state */
 static bool light_power_state = false;
 static int light_brightness = 100;  /* 0-100 */
-static sinricpro_color_t light_color = {255, 255, 255};  /* RGB */
+static sinricpro_light_color_t light_color = {255, 255, 255};  /* RGB */
 static int light_color_temperature = 2700;  /* Kelvin: 2200-7000 */
 static sinricpro_device_handle_t my_light = NULL;
 
@@ -266,7 +266,7 @@ static bool on_adjust_brightness(const char *device_id, int *delta, void *user_d
     return true;
 }
 
-static bool on_color(const char *device_id, sinricpro_color_t *color, void *user_data)
+static bool on_color(const char *device_id, sinricpro_light_color_t *color, void *user_data)
 {
     ESP_LOGI(TAG, "Color: R=%d, G=%d, B=%d", color->r, color->g, color->b);
     light_color = *color;

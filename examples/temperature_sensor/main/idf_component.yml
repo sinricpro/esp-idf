@@ -1,7 +1,0 @@
-dependencies:
-#  sinricpro/esp-idf:
-    version: "*"
-    override_path: "../../../"
-  # Uncomment to use real DHT sensor library
-  # espressif/esp-dht:
-  #   version: "^1.0.0"

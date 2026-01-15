@@ -1,7 +1,0 @@
-dependencies:
-  idf:
-    version: ">=4.4"
-  espressif/esp_websocket_client:
-    version: "^1.2.0"
-  espressif/cjson:
-    version: "*"
