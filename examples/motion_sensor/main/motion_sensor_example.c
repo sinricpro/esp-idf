@@ -147,7 +147,7 @@ static void motion_detection_task(void *arg)
             gpio_set_level(LED_GPIO, motion_detected ? 1 : 0);
 
             /* Send event to SinricPro */
-            esp_err_t ret = sinricpro_motion_sensor_send_event(
+            esp_err_t ret = sinricpro_motion_sensor_send_motion_event(
                 my_sensor,
                 motion_detected,
                 SINRICPRO_CAUSE_PHYSICAL_INTERACTION
