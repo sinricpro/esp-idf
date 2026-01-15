@@ -67,7 +67,7 @@ Add to your project's `idf_component.yml`:
 
 ```yaml
 dependencies:
-  sinricpro/esp-idf: "^1.1.1"
+  sinricpro/esp-idf: "^1.1.2"
 ```
 
 ### Method 2: Manual Installation
@@ -80,7 +80,7 @@ git clone https://github.com/sinricpro/esp-idf.git sinricpro
 Or
 
 ```bash
-idf.py add-dependency "sinricpro/esp-idf^1.1.1"
+idf.py add-dependency "sinricpro/esp-idf^1.1.2"
 ```
 
 View at: https://components.espressif.com/components/sinricpro/esp-idf
