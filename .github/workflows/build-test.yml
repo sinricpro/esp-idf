@@ -12,8 +12,26 @@ jobs:
     container:
       image: espressif/idf:v5.1
     strategy:
+      fail-fast: false
       matrix:
         idf-target: [esp32, esp32s2, esp32s3, esp32c3]
+        example:
+          - air_quality_sensor
+          - blinds
+          - contact_sensor
+          - dimswitch
+          - fan
+          - garage_door
+          - light
+          - lock
+          - motion_sensor
+          - power_sensor
+          - speaker
+          - switch
+          - temperature_sensor
+          - thermostat
+          - tv
+          - windowac
 
     steps:
       - name: Checkout repository
@@ -25,42 +43,15 @@ jobs:
         run: |
           find . -type d -name "managed_components" -exec rm -rf {} + || true
 
-      - name: Build Switch Example
-        working-directory: examples/switch
-        run: |
-          . $IDF_PATH/export.sh
-          idf.py set-target ${{ matrix.idf-target }}
-          idf.py build
-
-      - name: Build Light Example
-        working-directory: examples/light
-        run: |
-          . $IDF_PATH/export.sh
-          idf.py set-target ${{ matrix.idf-target }}
-          idf.py build
-
-      - name: Build Thermostat Example
-        working-directory: examples/thermostat
-        run: |
-          . $IDF_PATH/export.sh
-          idf.py set-target ${{ matrix.idf-target }}
-          idf.py build
-
-      - name: Build Fan Example
-        working-directory: examples/fan
-        run: |
-          . $IDF_PATH/export.sh
-          idf.py set-target ${{ matrix.idf-target }}
-          idf.py build
-
-      - name: Build Motion Sensor Example
-        working-directory: examples/motion_sensor
+      - name: Build ${{ matrix.example }} for ${{ matrix.idf-target }}
+        working-directory: examples/${{ matrix.example }}
         run: |
           . $IDF_PATH/export.sh
           idf.py set-target ${{ matrix.idf-target }}
           idf.py build
 
       - name: Check component size
+        if: matrix.example == 'switch' && matrix.idf-target == 'esp32'
         working-directory: examples/switch
         run: |
           . $IDF_PATH/export.sh
