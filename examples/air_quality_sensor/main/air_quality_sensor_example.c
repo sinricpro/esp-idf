@@ -174,7 +174,9 @@ void app_main(void)
     sinricpro_config_t config = {
         .app_key = APP_KEY,
         .app_secret = APP_SECRET,
-        .enable_trace = false
+        .auto_reconnect = true,
+        .reconnect_interval_ms = 5000,
+        .heartbeat_interval_ms = 0
     };
     ESP_ERROR_CHECK(sinricpro_init(&config));
 
