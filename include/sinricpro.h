@@ -22,7 +22,7 @@ extern "C" {
 /**
  * @brief SinricPro SDK version
  */
-#define SINRICPRO_VERSION "1.1.2"
+#define SINRICPRO_VERSION "1.2.1"
 
 /**
  * @brief SinricPro event base
