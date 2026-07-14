@@ -184,7 +184,7 @@ idf.py flash monitor
 - **Documentation**: [help.sinric.pro](https://help.sinric.pro)
 - **Community**: [Discord](https://discord.gg/W5299EgB59) - Get help from the community
 - **Issues**: [GitHub Issues](https://github.com/sinricpro/esp-idf/issues) - Report bugs or request features
-- **Email**: support@sinric.pro - Direct support
+- **Email**: support@sinric.com - Direct support
 - **Examples**: All examples include detailed README files with troubleshooting
 
 ## Related Projects
