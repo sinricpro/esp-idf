@@ -8,39 +8,92 @@
 
 #include "sinricpro_signature.h"
 #include <string.h>
+
+/* mbedTLS 2.x exposes the version/config in version.h; 3.x+ in build_info.h */
+#if defined(__has_include) && __has_include("mbedtls/build_info.h")
+#include "mbedtls/build_info.h"
+#else
+#include "mbedtls/version.h"
+#endif
+
+/*
+ * Pick an HMAC-SHA256 backend:
+ *  - mbedTLS 4.x (removed the mbedtls_md_hmac_* API) or md-less PSA builds:
+ *    PSA Crypto API
+ *  - MBEDTLS_MD_C enabled (default on mbedTLS 2.x/3.x): classic md layer
+ *  - otherwise (e.g. sdkconfig without CONFIG_MBEDTLS_MD_C): HMAC built
+ *    directly on the always-available SHA-256 primitives
+ */
+#if MBEDTLS_VERSION_NUMBER >= 0x04000000 || \
+    (!defined(MBEDTLS_MD_C) && defined(MBEDTLS_PSA_CRYPTO_C))
+#define SINRICPRO_HMAC_BACKEND_PSA 1
+#include "psa/crypto.h"
+#elif defined(MBEDTLS_MD_C)
+#define SINRICPRO_HMAC_BACKEND_MD 1
 #include "mbedtls/md.h"
+#else
+#define SINRICPRO_HMAC_BACKEND_SHA256 1
+#include "mbedtls/sha256.h"
+#if MBEDTLS_VERSION_NUMBER < 0x03000000
+#define mbedtls_sha256        mbedtls_sha256_ret
+#define mbedtls_sha256_starts mbedtls_sha256_starts_ret
+#define mbedtls_sha256_update mbedtls_sha256_update_ret
+#define mbedtls_sha256_finish mbedtls_sha256_finish_ret
+#endif
+#endif
+
 #include "mbedtls/base64.h"
 #include "esp_log.h"
 
 static const char *TAG = "sinricpro_signature";
 
 /**
- * @brief Calculate HMAC-SHA256 signature and encode as base64
+ * @brief Compute HMAC-SHA256 of payload using secret as the key
  *
- * @param[in]  secret      Secret key for HMAC
- * @param[in]  payload     Payload string to sign
- * @param[out] signature   Output buffer for base64-encoded signature
- * @param[in]  sig_len     Size of signature buffer (must be >= 45 bytes)
+ * @param[in]  secret       Secret key (NUL-terminated)
+ * @param[in]  payload      Data to sign (NUL-terminated)
+ * @param[out] hmac_result  Output buffer, must hold 32 bytes
  *
- * @return
- *     - ESP_OK: Success
- *     - ESP_ERR_INVALID_ARG: Invalid arguments
- *     - ESP_FAIL: HMAC or base64 encoding failed
+ * @return ESP_OK on success, ESP_FAIL on failure
  */
-esp_err_t sinricpro_calculate_signature(const char *secret,
-                                         const char *payload,
-                                         char *signature,
-                                         size_t sig_len)
+static esp_err_t sinricpro_hmac_sha256(const char *secret,
+                                       const char *payload,
+                                       unsigned char hmac_result[32])
 {
-    if (secret == NULL || payload == NULL || signature == NULL || sig_len < 45) {
-        ESP_LOGE(TAG, "Invalid arguments");
-        return ESP_ERR_INVALID_ARG;
+#if defined(SINRICPRO_HMAC_BACKEND_PSA)
+    psa_status_t status = psa_crypto_init();
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "psa_crypto_init failed: %d", (int)status);
+        return ESP_FAIL;
     }
 
-    unsigned char hmac_result[32];  /* SHA256 produces 32 bytes */
-    size_t olen = 0;
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_MESSAGE);
+    psa_set_key_algorithm(&attributes, PSA_ALG_HMAC(PSA_ALG_SHA_256));
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_HMAC);
 
-    /* Calculate HMAC-SHA256 */
+    psa_key_id_t key_id = 0;
+    status = psa_import_key(&attributes, (const uint8_t *)secret,
+                            strlen(secret), &key_id);
+    psa_reset_key_attributes(&attributes);
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "psa_import_key failed: %d", (int)status);
+        return ESP_FAIL;
+    }
+
+    size_t mac_len = 0;
+    status = psa_mac_compute(key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256),
+                             (const uint8_t *)payload, strlen(payload),
+                             hmac_result, 32, &mac_len);
+    psa_destroy_key(key_id);
+    if (status != PSA_SUCCESS || mac_len != 32) {
+        ESP_LOGE(TAG, "psa_mac_compute failed: %d", (int)status);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+
+#elif defined(SINRICPRO_HMAC_BACKEND_MD)
     mbedtls_md_context_t ctx;
     mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
 
@@ -75,10 +128,105 @@ esp_err_t sinricpro_calculate_signature(const char *secret,
     }
 
     mbedtls_md_free(&ctx);
+    return ESP_OK;
+
+#else /* SINRICPRO_HMAC_BACKEND_SHA256 */
+    /* HMAC per RFC 2104 over raw SHA-256 (block size 64 bytes) */
+    unsigned char key_block[64] = {0};
+    unsigned char pad[64];
+    unsigned char inner_hash[32];
+    size_t secret_len = strlen(secret);
+    mbedtls_sha256_context ctx;
+    int ret;
+
+    if (secret_len > sizeof(key_block)) {
+        ret = mbedtls_sha256((const unsigned char *)secret, secret_len, key_block, 0);
+        if (ret != 0) {
+            ESP_LOGE(TAG, "mbedtls_sha256 (key) failed: %d", ret);
+            return ESP_FAIL;
+        }
+    } else {
+        memcpy(key_block, secret, secret_len);
+    }
+
+    mbedtls_sha256_init(&ctx);
+
+    for (size_t i = 0; i < sizeof(pad); i++) {
+        pad[i] = key_block[i] ^ 0x36;
+    }
+    ret = mbedtls_sha256_starts(&ctx, 0);
+    if (ret == 0) {
+        ret = mbedtls_sha256_update(&ctx, pad, sizeof(pad));
+    }
+    if (ret == 0) {
+        ret = mbedtls_sha256_update(&ctx, (const unsigned char *)payload, strlen(payload));
+    }
+    if (ret == 0) {
+        ret = mbedtls_sha256_finish(&ctx, inner_hash);
+    }
+
+    if (ret == 0) {
+        for (size_t i = 0; i < sizeof(pad); i++) {
+            pad[i] = key_block[i] ^ 0x5C;
+        }
+        ret = mbedtls_sha256_starts(&ctx, 0);
+    }
+    if (ret == 0) {
+        ret = mbedtls_sha256_update(&ctx, pad, sizeof(pad));
+    }
+    if (ret == 0) {
+        ret = mbedtls_sha256_update(&ctx, inner_hash, sizeof(inner_hash));
+    }
+    if (ret == 0) {
+        ret = mbedtls_sha256_finish(&ctx, hmac_result);
+    }
+
+    mbedtls_sha256_free(&ctx);
+
+    if (ret != 0) {
+        ESP_LOGE(TAG, "HMAC-SHA256 calculation failed: %d", ret);
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+#endif
+}
+
+/**
+ * @brief Calculate HMAC-SHA256 signature and encode as base64
+ *
+ * @param[in]  secret      Secret key for HMAC
+ * @param[in]  payload     Payload string to sign
+ * @param[out] signature   Output buffer for base64-encoded signature
+ * @param[in]  sig_len     Size of signature buffer (must be >= 45 bytes)
+ *
+ * @return
+ *     - ESP_OK: Success
+ *     - ESP_ERR_INVALID_ARG: Invalid arguments
+ *     - ESP_FAIL: HMAC or base64 encoding failed
+ */
+esp_err_t sinricpro_calculate_signature(const char *secret,
+                                         const char *payload,
+                                         char *signature,
+                                         size_t sig_len)
+{
+    if (secret == NULL || payload == NULL || signature == NULL || sig_len < 45) {
+        ESP_LOGE(TAG, "Invalid arguments");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    unsigned char hmac_result[32];  /* SHA256 produces 32 bytes */
+    size_t olen = 0;
+
+    /* Calculate HMAC-SHA256 */
+    esp_err_t err = sinricpro_hmac_sha256(secret, payload, hmac_result);
+    if (err != ESP_OK) {
+        return err;
+    }
 
     /* Encode to base64 */
-    ret = mbedtls_base64_encode((unsigned char *)signature, sig_len, &olen,
-                                 hmac_result, sizeof(hmac_result));
+    int ret = mbedtls_base64_encode((unsigned char *)signature, sig_len, &olen,
+                                     hmac_result, sizeof(hmac_result));
     if (ret != 0) {
         ESP_LOGE(TAG, "mbedtls_base64_encode failed: %d", ret);
         return ESP_FAIL;
