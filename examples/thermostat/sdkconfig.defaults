@@ -1,0 +1,4 @@
+# The default 2 MB / single-app layout leaves no room once local control pulls
+# in the mdns responder.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

@@ -233,6 +233,12 @@ static void handle_request(cJSON *json_message, const sinricpro_msg_origin_t *or
     sinricpro_device_t *device = find_device(device_id);
     xSemaphoreGive(core_state.mutex);
 
+    if (device == NULL && origin != NULL &&
+        origin->transport == SINRICPRO_TRANSPORT_UDP) {
+        ESP_LOGD(TAG, "Ignoring LAN request for unknown device: %s", device_id);
+        return;
+    }
+
     /* Prepare response */
     cJSON *response = cJSON_CreateObject();
     cJSON *response_header = cJSON_CreateObject();

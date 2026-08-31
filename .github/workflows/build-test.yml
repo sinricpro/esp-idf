@@ -57,6 +57,67 @@ jobs:
           . $IDF_PATH/export.sh
           idf.py size
 
+  # Local control without the mDNS announcement. Keeps the UDP listener but
+  # drops the mdns component, which is the configuration for a board whose app
+  # partition cannot take it. A gate that is never built is a gate that breaks.
+  build-no-mdns:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.1
+    strategy:
+      fail-fast: false
+      matrix:
+        idf-target: [esp32c3, esp32]
+        example: [contact_sensor, switch]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Clean managed components
+        run: |
+          find . -type d -name "managed_components" -exec rm -rf {} + || true
+
+      - name: Build ${{ matrix.example }} for ${{ matrix.idf-target }} without mDNS
+        working-directory: examples/${{ matrix.example }}
+        run: |
+          . $IDF_PATH/export.sh
+          echo "CONFIG_SINRICPRO_LOCAL_CONTROL_NO_MDNS=y" >> sdkconfig.defaults
+          idf.py set-target ${{ matrix.idf-target }}
+          idf.py build
+
+  # Local control compiled out entirely. This variant has never been proven by a
+  # full link, so CI is the place that does it.
+  build-no-local-control:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.1
+    strategy:
+      fail-fast: false
+      matrix:
+        idf-target: [esp32, esp32c3]
+        example: [switch]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Clean managed components
+        run: |
+          find . -type d -name "managed_components" -exec rm -rf {} + || true
+
+      - name: Build ${{ matrix.example }} for ${{ matrix.idf-target }} without local control
+        working-directory: examples/${{ matrix.example }}
+        run: |
+          . $IDF_PATH/export.sh
+          echo "CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL=n" >> sdkconfig.defaults
+          idf.py set-target ${{ matrix.idf-target }}
+          idf.py build
+
   lint:
     runs-on: ubuntu-latest
     steps:
