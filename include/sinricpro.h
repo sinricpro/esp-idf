@@ -22,7 +22,7 @@ extern "C" {
 /**
  * @brief SinricPro SDK version
  */
-#define SINRICPRO_VERSION "1.2.1"
+#define SINRICPRO_VERSION "1.3.0"
 
 /**
  * @brief SinricPro event base
@@ -119,6 +119,19 @@ esp_err_t sinricpro_deinit(void);
  * @note This function is thread-safe
  */
 bool sinricpro_is_connected(void);
+
+/**
+ * @brief Check whether local control is serving LAN requests
+ *
+ * Independent of the cloud connection: a device that has never reached
+ * SinricPro still answers signed commands from the app on the LAN.
+ *
+ * @return true if the UDP listener is bound and joined to the multicast group,
+ *         false if it is not, or if local control was configured out
+ *
+ * @note This function is thread-safe
+ */
+bool sinricpro_local_control_is_running(void);
 
 /**
  * @brief Get current timestamp from server

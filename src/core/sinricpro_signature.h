@@ -11,6 +11,7 @@
 
 #include "esp_err.h"
 #include "sinricpro_types.h"
+#include "cJSON.h"
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -67,6 +68,73 @@ esp_err_t sinricpro_verify_signature(const char *secret,
 esp_err_t sinricpro_extract_payload(const char *json_message,
                                      char *payload,
                                      size_t payload_len);
+
+/**
+ * @brief Calculate a signature over an explicit byte range
+ *
+ * Same as sinricpro_calculate_signature() but the payload need not be
+ * NUL-terminated, so a slice of a received buffer can be signed in place.
+ *
+ * @param[in]  secret       Secret key for HMAC
+ * @param[in]  payload      Start of the payload bytes
+ * @param[in]  payload_len  Number of payload bytes
+ * @param[out] signature    Output buffer for base64-encoded signature
+ * @param[in]  sig_len      Size of signature buffer (must be >= 45 bytes)
+ *
+ * @return ESP_OK, ESP_ERR_INVALID_ARG or ESP_FAIL
+ */
+esp_err_t sinricpro_calculate_signature_n(const char *secret,
+                                          const char *payload,
+                                          size_t payload_len,
+                                          char *signature,
+                                          size_t sig_len);
+
+/**
+ * @brief Verify a signature over an explicit byte range, in constant time
+ *
+ * @param[in] secret             Secret key for HMAC
+ * @param[in] payload            Start of the payload bytes as received
+ * @param[in] payload_len        Number of payload bytes
+ * @param[in] received_signature Base64-encoded signature to verify
+ *
+ * @return ESP_OK, ESP_ERR_INVALID_ARG, SINRICPRO_ERR_SIGNATURE or ESP_FAIL
+ */
+esp_err_t sinricpro_verify_signature_n(const char *secret,
+                                       const char *payload,
+                                       size_t payload_len,
+                                       const char *received_signature);
+
+/**
+ * @brief Locate the payload inside a received message without copying it
+ *
+ * Points into @p json_message; nothing is allocated. The slice is taken from
+ * the bytes as received - re-serialising a parsed object would assume the
+ * sender's key order and spacing, which are its own.
+ *
+ * @param[in]  json_message  Complete JSON message string as received
+ * @param[out] payload       Receives a pointer into @p json_message
+ * @param[out] payload_len   Receives the payload length in bytes
+ *
+ * @return ESP_OK or ESP_FAIL if the payload could not be located
+ */
+esp_err_t sinricpro_extract_payload_ref(const char *json_message,
+                                        const char **payload,
+                                        size_t *payload_len);
+
+/**
+ * @brief Sign a message and return the exact bytes to transmit
+ *
+ * The payload is serialised once and that string is spliced into the envelope,
+ * so the bytes on the wire are the bytes that were signed. The signature is
+ * emitted last, which is what lets a receiver find the payload by slicing
+ * between "payload": and ,"signature".
+ *
+ * @param[in] secret  Secret key for HMAC
+ * @param[in] json    Message object containing at least a "payload" member
+ *
+ * @return Serialised signed message (caller frees), or NULL on failure
+ */
+char *sinricpro_sign_message(const char *secret, cJSON *json);
 
 #ifdef __cplusplus
 }

@@ -104,4 +104,60 @@ menu "SinricPro Configuration"
         help
             Interval for sending heartbeat/ping messages to server.
 
+    config SINRICPRO_ENABLE_LOCAL_CONTROL
+        bool "Enable local control (LAN/UDP)"
+        default y
+        help
+            Answer signed SinricPro commands received over the LAN, so the
+            device keeps responding to the app while the cloud is unreachable.
+
+            Listens on UDP SINRICPRO_UDP_PORT, joined to the SinricPro
+            multicast group and also answering unicast. Requests are dispatched
+            through the same capability callbacks as cloud requests.
+
+    config SINRICPRO_LOCAL_CONTROL_NO_MDNS
+        bool "Disable the mDNS announcement"
+        default n
+        depends on SINRICPRO_ENABLE_LOCAL_CONTROL
+        help
+            Keep the UDP listener but do not publish _sinricpro._udp.local.
+            The device is then only reachable at the address the cloud reports
+            for it, and cannot be discovered on the LAN.
+
+            Saves the flash and RAM cost of the mdns component.
+
+    config SINRICPRO_UDP_PORT
+        int "Local control UDP port"
+        default 3333
+        range 1 65535
+        depends on SINRICPRO_ENABLE_LOCAL_CONTROL
+        help
+            Wire contract with the SinricPro app. Only change this if the app
+            has been configured to match.
+
+    config SINRICPRO_UDP_MULTICAST_IP
+        string "Local control multicast group"
+        default "224.9.9.9"
+        depends on SINRICPRO_ENABLE_LOCAL_CONTROL
+        help
+            Wire contract with the SinricPro app. Only change this if the app
+            has been configured to match.
+
+    config SINRICPRO_UDP_TASK_STACK_SIZE
+        int "Local control task stack size"
+        default 6144
+        depends on SINRICPRO_ENABLE_LOCAL_CONTROL
+        help
+            Stack for the UDP listener task. Device callbacks run on this task,
+            on top of signature verification and JSON parsing, so lower it only
+            after measuring the high-water mark of your own callbacks.
+
+    config SINRICPRO_UDP_TASK_PRIORITY
+        int "Local control task priority"
+        default 5
+        range 1 24
+        depends on SINRICPRO_ENABLE_LOCAL_CONTROL
+        help
+            Priority of the UDP listener task.
+
 endmenu
