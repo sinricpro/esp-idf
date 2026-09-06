@@ -1,4 +1,4 @@
-version: "1.2.1"
+version: "1.3.0"
 description: "SinricPro IoT platform integration for ESP-IDF - Control ESP32 devices with Alexa and Google Home"
 url: "https://github.com/sinricpro/esp-idf"
 documentation: "https://help.sinric.pro"
@@ -12,6 +12,10 @@ dependencies:
     version: "^1.2.0"
   espressif/cjson:
     version: "*"
+  # Local control announcement. Always fetched; only linked when
+  # CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL is set and ..._NO_MDNS is not.
+  espressif/mdns:
+    version: "^1.8.0"
 
 tags:
   - iot

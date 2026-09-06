@@ -12,6 +12,7 @@ Official ESP-IDF component for [SinricPro](https://sinric.pro) - Control your ES
 
 - ✅ **Voice Control** - Works with Alexa and Google Home
 - ✅ **Real-time** - WebSocket-based bidirectional communication
+- ✅ **Local Control** - Answers the app over the LAN when the cloud is down
 - ✅ **Secure** - HMAC-SHA256 message signatures
 - ✅ **Reliable** - Auto-reconnection and heartbeat monitoring
 - ✅ **Event-driven** - ESP event loop integration
@@ -53,6 +54,26 @@ All devices below have complete API support and working examples:
 - ✅ Power Sensor - Voltage, current, power monitoring
 - ✅ Window AC - Air conditioner with fan speed and temperature
 
+## Local Control (LAN)
+
+The device answers signed SinricPro commands received over the LAN, so the app
+keeps working when the cloud is unreachable. It is on by default and needs no
+code changes: LAN requests are dispatched through the same capability callbacks
+as cloud requests.
+
+### Configuration
+
+`idf.py menuconfig` → *Component config* → *SinricPro Configuration*:
+
+| Option | Default | Effect |
+|---|---|---|
+| `SINRICPRO_ENABLE_LOCAL_CONTROL` | on | Compile local control in |
+| `SINRICPRO_LOCAL_CONTROL_NO_MDNS` | off | Keep UDP, drop the announcement (and the `mdns` dependency) |
+| `SINRICPRO_UDP_PORT` | 3333 | Wire contract with the app |
+| `SINRICPRO_UDP_MULTICAST_IP` | 224.9.9.9 | Wire contract with the app |
+| `SINRICPRO_UDP_TASK_STACK_SIZE` | 6144 | Device callbacks run on this task |
+| `SINRICPRO_UDP_TASK_PRIORITY` | 5 | |
+
 ## Requirements
 
 - ESP-IDF v4.4 or higher. Tested on ESP-IDF 6.1
@@ -67,7 +88,7 @@ Add to your project's `idf_component.yml`:
 
 ```yaml
 dependencies:
-  sinricpro/esp-idf: "^1.2.1"
+  sinricpro/esp-idf: "^1.3.1"
 ```
 
 ### Method 2: Manual Installation
@@ -80,7 +101,7 @@ git clone https://github.com/sinricpro/esp-idf.git sinricpro
 Or
 
 ```bash
-idf.py add-dependency "sinricpro/esp-idf^1.2.1"
+idf.py add-dependency "sinricpro/esp-idf^1.3.1"
 ```
 
 View at: https://components.espressif.com/components/sinricpro/esp-idf

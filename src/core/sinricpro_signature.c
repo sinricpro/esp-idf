@@ -7,6 +7,7 @@
  */
 
 #include "sinricpro_signature.h"
+#include <stdlib.h>
 #include <string.h>
 
 /* mbedTLS 2.x exposes the version/config in version.h; 3.x+ in build_info.h */
@@ -51,13 +52,15 @@ static const char *TAG = "sinricpro_signature";
  * @brief Compute HMAC-SHA256 of payload using secret as the key
  *
  * @param[in]  secret       Secret key (NUL-terminated)
- * @param[in]  payload      Data to sign (NUL-terminated)
+ * @param[in]  payload      Data to sign
+ * @param[in]  payload_len  Number of bytes to sign
  * @param[out] hmac_result  Output buffer, must hold 32 bytes
  *
  * @return ESP_OK on success, ESP_FAIL on failure
  */
 static esp_err_t sinricpro_hmac_sha256(const char *secret,
                                        const char *payload,
+                                       size_t payload_len,
                                        unsigned char hmac_result[32])
 {
 #if defined(SINRICPRO_HMAC_BACKEND_PSA)
@@ -83,7 +86,7 @@ static esp_err_t sinricpro_hmac_sha256(const char *secret,
 
     size_t mac_len = 0;
     status = psa_mac_compute(key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256),
-                             (const uint8_t *)payload, strlen(payload),
+                             (const uint8_t *)payload, payload_len,
                              hmac_result, 32, &mac_len);
     psa_destroy_key(key_id);
     if (status != PSA_SUCCESS || mac_len != 32) {
@@ -113,7 +116,7 @@ static esp_err_t sinricpro_hmac_sha256(const char *secret,
         return ESP_FAIL;
     }
 
-    ret = mbedtls_md_hmac_update(&ctx, (const unsigned char *)payload, strlen(payload));
+    ret = mbedtls_md_hmac_update(&ctx, (const unsigned char *)payload, payload_len);
     if (ret != 0) {
         ESP_LOGE(TAG, "mbedtls_md_hmac_update failed: %d", ret);
         mbedtls_md_free(&ctx);
@@ -159,7 +162,7 @@ static esp_err_t sinricpro_hmac_sha256(const char *secret,
         ret = mbedtls_sha256_update(&ctx, pad, sizeof(pad));
     }
     if (ret == 0) {
-        ret = mbedtls_sha256_update(&ctx, (const unsigned char *)payload, strlen(payload));
+        ret = mbedtls_sha256_update(&ctx, (const unsigned char *)payload, payload_len);
     }
     if (ret == 0) {
         ret = mbedtls_sha256_finish(&ctx, inner_hash);
@@ -193,22 +196,33 @@ static esp_err_t sinricpro_hmac_sha256(const char *secret,
 }
 
 /**
- * @brief Calculate HMAC-SHA256 signature and encode as base64
+ * @brief Constant-time comparison of two NUL-terminated strings
  *
- * @param[in]  secret      Secret key for HMAC
- * @param[in]  payload     Payload string to sign
- * @param[out] signature   Output buffer for base64-encoded signature
- * @param[in]  sig_len     Size of signature buffer (must be >= 45 bytes)
- *
- * @return
- *     - ESP_OK: Success
- *     - ESP_ERR_INVALID_ARG: Invalid arguments
- *     - ESP_FAIL: HMAC or base64 encoding failed
+ * Comparing signatures with strcmp() leaks how many leading bytes matched,
+ * which is enough to narrow a forgery byte by byte.
  */
-esp_err_t sinricpro_calculate_signature(const char *secret,
-                                         const char *payload,
-                                         char *signature,
-                                         size_t sig_len)
+static bool sinricpro_const_time_equal(const char *a, const char *b)
+{
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+
+    if (len_a != len_b) {
+        return false;
+    }
+
+    unsigned char diff = 0;
+    for (size_t i = 0; i < len_a; i++) {
+        diff |= (unsigned char)a[i] ^ (unsigned char)b[i];
+    }
+
+    return diff == 0;
+}
+
+esp_err_t sinricpro_calculate_signature_n(const char *secret,
+                                          const char *payload,
+                                          size_t payload_len,
+                                          char *signature,
+                                          size_t sig_len)
 {
     if (secret == NULL || payload == NULL || signature == NULL || sig_len < 45) {
         ESP_LOGE(TAG, "Invalid arguments");
@@ -218,13 +232,11 @@ esp_err_t sinricpro_calculate_signature(const char *secret,
     unsigned char hmac_result[32];  /* SHA256 produces 32 bytes */
     size_t olen = 0;
 
-    /* Calculate HMAC-SHA256 */
-    esp_err_t err = sinricpro_hmac_sha256(secret, payload, hmac_result);
+    esp_err_t err = sinricpro_hmac_sha256(secret, payload, payload_len, hmac_result);
     if (err != ESP_OK) {
         return err;
     }
 
-    /* Encode to base64 */
     int ret = mbedtls_base64_encode((unsigned char *)signature, sig_len, &olen,
                                      hmac_result, sizeof(hmac_result));
     if (ret != 0) {
@@ -232,29 +244,29 @@ esp_err_t sinricpro_calculate_signature(const char *secret,
         return ESP_FAIL;
     }
 
-    signature[olen] = '\0';  /* Null-terminate */
-
-    ESP_LOGD(TAG, "Signature calculated: %s", signature);
+    signature[olen] = '\0';
 
     return ESP_OK;
 }
 
-/**
- * @brief Verify HMAC-SHA256 signature
- *
- * @param[in] secret             Secret key for HMAC
- * @param[in] payload            Payload string that was signed
- * @param[in] received_signature Base64-encoded signature to verify
- *
- * @return
- *     - ESP_OK: Signature is valid
- *     - ESP_ERR_INVALID_ARG: Invalid arguments
- *     - SINRICPRO_ERR_SIGNATURE: Signature is invalid
- *     - ESP_FAIL: Calculation failed
- */
-esp_err_t sinricpro_verify_signature(const char *secret,
-                                      const char *payload,
-                                      const char *received_signature)
+esp_err_t sinricpro_calculate_signature(const char *secret,
+                                         const char *payload,
+                                         char *signature,
+                                         size_t sig_len)
+{
+    if (payload == NULL) {
+        ESP_LOGE(TAG, "Invalid arguments");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return sinricpro_calculate_signature_n(secret, payload, strlen(payload),
+                                            signature, sig_len);
+}
+
+esp_err_t sinricpro_verify_signature_n(const char *secret,
+                                       const char *payload,
+                                       size_t payload_len,
+                                       const char *received_signature)
 {
     if (secret == NULL || payload == NULL || received_signature == NULL) {
         ESP_LOGE(TAG, "Invalid arguments");
@@ -263,100 +275,254 @@ esp_err_t sinricpro_verify_signature(const char *secret,
 
     char calculated_signature[64];
 
-    esp_err_t ret = sinricpro_calculate_signature(secret, payload,
-                                                    calculated_signature,
-                                                    sizeof(calculated_signature));
+    esp_err_t ret = sinricpro_calculate_signature_n(secret, payload, payload_len,
+                                                     calculated_signature,
+                                                     sizeof(calculated_signature));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to calculate signature");
         return ret;
     }
 
-    /* Compare signatures */
-    if (strcmp(calculated_signature, received_signature) == 0) {
+    if (sinricpro_const_time_equal(calculated_signature, received_signature)) {
         ESP_LOGD(TAG, "Signature verification passed");
         return ESP_OK;
-    } else {
-        ESP_LOGW(TAG, "Signature verification failed");
-        ESP_LOGW(TAG, "Expected: %s", calculated_signature);
-        ESP_LOGW(TAG, "Received: %s", received_signature);
-        return SINRICPRO_ERR_SIGNATURE;
     }
+
+    ESP_LOGW(TAG, "Signature verification failed");
+    return SINRICPRO_ERR_SIGNATURE;
 }
 
-/**
- * @brief Extract payload string from JSON message
- *
- * Extracts the "payload" field from a JSON message string for signature
- * calculation/verification.
- *
- * @param[in]  json_message  Complete JSON message string
- * @param[out] payload       Output buffer for extracted payload
- * @param[in]  payload_len   Size of payload buffer
- *
- * @return
- *     - ESP_OK: Success
- *     - ESP_ERR_INVALID_ARG: Invalid arguments
- *     - ESP_FAIL: Failed to extract payload
- */
-esp_err_t sinricpro_extract_payload(const char *json_message,
-                                     char *payload,
-                                     size_t payload_len)
+esp_err_t sinricpro_verify_signature(const char *secret,
+                                      const char *payload,
+                                      const char *received_signature)
 {
-    if (json_message == NULL || payload == NULL || payload_len == 0) {
+    if (payload == NULL) {
         ESP_LOGE(TAG, "Invalid arguments");
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Find "payload" field in JSON */
-    const char *payload_start = strstr(json_message, "\"payload\":");
-    if (payload_start == NULL) {
+    return sinricpro_verify_signature_n(secret, payload, strlen(payload),
+                                         received_signature);
+}
+
+esp_err_t sinricpro_extract_payload_ref(const char *json_message,
+                                        const char **payload,
+                                        size_t *payload_len)
+{
+    if (json_message == NULL || payload == NULL || payload_len == NULL) {
+        ESP_LOGE(TAG, "Invalid arguments");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    static const char kPayloadMarker[]   = "\"payload\":";
+    static const char kSignatureMarker[] = ",\"signature\"";
+
+    const char *start = strstr(json_message, kPayloadMarker);
+    if (start == NULL) {
         ESP_LOGE(TAG, "\"payload\" field not found in JSON");
         return ESP_FAIL;
     }
+    start += sizeof(kPayloadMarker) - 1;
 
-    /* Skip to the start of the payload object */
-    payload_start = strchr(payload_start, '{');
-    if (payload_start == NULL) {
-        ESP_LOGE(TAG, "Payload object not found");
-        return ESP_FAIL;
-    }
+    /* Wire contract: the signature always follows the payload, so the payload
+     * is exactly the bytes between the two markers. */
+    const char *end = strstr(start, kSignatureMarker);
 
-    /* Find the end of the payload object by matching braces */
-    int brace_count = 0;
-    const char *p = payload_start;
-    const char *payload_end = NULL;
+    if (end == NULL) {
+        /* No signature member, or it precedes the payload: fall back to
+         * matching the payload object's own braces. */
+        const char *p = strchr(start, '{');
+        if (p == NULL) {
+            ESP_LOGE(TAG, "Payload object not found");
+            return ESP_FAIL;
+        }
+        start = p;
 
-    while (*p != '\0') {
-        if (*p == '{') {
-            brace_count++;
-        } else if (*p == '}') {
-            brace_count--;
-            if (brace_count == 0) {
-                payload_end = p + 1;  /* Include closing brace */
-                break;
+        int depth = 0;
+        bool in_string = false;
+        bool escaped = false;
+
+        for (; *p != '\0'; p++) {
+            if (in_string) {
+                if (escaped) {
+                    escaped = false;
+                } else if (*p == '\\') {
+                    escaped = true;
+                } else if (*p == '"') {
+                    in_string = false;
+                }
+                continue;
+            }
+            if (*p == '"') {
+                in_string = true;
+            } else if (*p == '{') {
+                depth++;
+            } else if (*p == '}') {
+                if (--depth == 0) {
+                    end = p + 1;
+                    break;
+                }
             }
         }
-        p++;
+
+        if (end == NULL) {
+            ESP_LOGE(TAG, "Payload object end not found");
+            return ESP_FAIL;
+        }
     }
 
-    if (payload_end == NULL) {
-        ESP_LOGE(TAG, "Payload object end not found");
+    if (end <= start) {
+        ESP_LOGE(TAG, "Empty payload");
         return ESP_FAIL;
     }
 
-    size_t payload_size = payload_end - payload_start;
+    *payload = start;
+    *payload_len = (size_t)(end - start);
 
-    if (payload_size >= payload_len) {
+    return ESP_OK;
+}
+
+esp_err_t sinricpro_extract_payload(const char *json_message,
+                                     char *payload,
+                                     size_t payload_len)
+{
+    if (payload == NULL || payload_len == 0) {
+        ESP_LOGE(TAG, "Invalid arguments");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const char *start = NULL;
+    size_t len = 0;
+
+    esp_err_t ret = sinricpro_extract_payload_ref(json_message, &start, &len);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
+    if (len >= payload_len) {
         ESP_LOGE(TAG, "Payload buffer too small (need %zu, have %zu)",
-                 payload_size + 1, payload_len);
+                 len + 1, payload_len);
         return ESP_ERR_INVALID_SIZE;
     }
 
-    /* Copy payload to output buffer */
-    memcpy(payload, payload_start, payload_size);
-    payload[payload_size] = '\0';
-
-    ESP_LOGD(TAG, "Extracted payload: %s", payload);
+    memcpy(payload, start, len);
+    payload[len] = '\0';
 
     return ESP_OK;
+}
+
+/**
+ * @brief Append bytes to a growable buffer
+ *
+ * On allocation failure the buffer is freed and *buf set to NULL, so a chain
+ * of appends can be written without a check between every step.
+ */
+static bool sinricpro_str_append(char **buf, size_t *used, size_t *cap,
+                                 const char *data, size_t len)
+{
+    if (*buf == NULL) {
+        return false;
+    }
+
+    if (*used + len + 1 > *cap) {
+        size_t new_cap = (*cap == 0) ? 256 : *cap;
+        while (new_cap < *used + len + 1) {
+            new_cap *= 2;
+        }
+        char *grown = realloc(*buf, new_cap);
+        if (grown == NULL) {
+            free(*buf);
+            *buf = NULL;
+            return false;
+        }
+        *buf = grown;
+        *cap = new_cap;
+    }
+
+    memcpy(*buf + *used, data, len);
+    *used += len;
+    (*buf)[*used] = '\0';
+
+    return true;
+}
+
+char *sinricpro_sign_message(const char *secret, cJSON *json)
+{
+    if (secret == NULL || json == NULL) {
+        return NULL;
+    }
+
+    cJSON *payload = cJSON_GetObjectItem(json, "payload");
+    if (payload == NULL) {
+        ESP_LOGE(TAG, "Message has no payload to sign");
+        return NULL;
+    }
+
+    /* Serialised once. Everything below splices this exact string, so nothing
+     * can enter the payload between signing and transmission. */
+    char *payload_str = cJSON_PrintUnformatted(payload);
+    if (payload_str == NULL) {
+        return NULL;
+    }
+
+    char signature[64];
+    if (sinricpro_calculate_signature(secret, payload_str, signature,
+                                       sizeof(signature)) != ESP_OK) {
+        free(payload_str);
+        return NULL;
+    }
+
+    size_t cap = 256;
+    size_t used = 0;
+    char *out = malloc(cap);
+    if (out == NULL) {
+        free(payload_str);
+        return NULL;
+    }
+    out[0] = '\0';
+
+    bool ok = sinricpro_str_append(&out, &used, &cap, "{", 1);
+
+    /* Members other than payload/signature first, in their existing order.
+     * Keys are SDK-generated identifiers, so they need no escaping. */
+    for (cJSON *child = json->child; ok && child != NULL; child = child->next) {
+        if (child->string == NULL ||
+            strcmp(child->string, "payload") == 0 ||
+            strcmp(child->string, "signature") == 0) {
+            continue;
+        }
+
+        char *value = cJSON_PrintUnformatted(child);
+        if (value == NULL) {
+            ok = false;
+            break;
+        }
+
+        ok = sinricpro_str_append(&out, &used, &cap, "\"", 1) &&
+             sinricpro_str_append(&out, &used, &cap, child->string,
+                                   strlen(child->string)) &&
+             sinricpro_str_append(&out, &used, &cap, "\":", 2) &&
+             sinricpro_str_append(&out, &used, &cap, value, strlen(value)) &&
+             sinricpro_str_append(&out, &used, &cap, ",", 1);
+
+        free(value);
+    }
+
+    /* Payload, then signature last: a receiver locates the payload by slicing
+     * between "payload": and ,"signature". */
+    ok = ok &&
+         sinricpro_str_append(&out, &used, &cap, "\"payload\":", 10) &&
+         sinricpro_str_append(&out, &used, &cap, payload_str, strlen(payload_str)) &&
+         sinricpro_str_append(&out, &used, &cap, ",\"signature\":{\"HMAC\":\"", 22) &&
+         sinricpro_str_append(&out, &used, &cap, signature, strlen(signature)) &&
+         sinricpro_str_append(&out, &used, &cap, "\"}}", 3);
+
+    free(payload_str);
+
+    if (!ok) {
+        free(out);
+        return NULL;
+    }
+
+    return out;
 }

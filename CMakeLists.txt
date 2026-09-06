@@ -1,3 +1,19 @@
+# Requirements are resolved during early expansion, where sdkconfig values are
+# already available; the mdns component is only pulled in when it is used.
+set(SINRICPRO_REQUIRES
+    esp_websocket_client
+    mbedtls
+    esp_event
+    nvs_flash
+    esp_netif
+    esp_wifi
+    cjson
+)
+
+if(CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL AND NOT CONFIG_SINRICPRO_LOCAL_CONTROL_NO_MDNS)
+    list(APPEND SINRICPRO_REQUIRES espressif__mdns)
+endif()
+
 idf_component_register(
     SRCS
         "src/core/sinricpro_core.c"
@@ -5,6 +21,8 @@ idf_component_register(
         "src/core/sinricpro_signature.c"
         "src/core/sinricpro_message_queue.c"
         "src/core/sinricpro_event_limiter.c"
+        "src/core/sinricpro_udp.c"
+        "src/core/sinricpro_mdns.c"
         "src/devices/sinricpro_switch.c"
         "src/devices/sinricpro_motion_sensor.c"
         "src/devices/sinricpro_contact_sensor.c"
@@ -47,11 +65,5 @@ idf_component_register(
     INCLUDE_DIRS
         "include"
     REQUIRES
-        esp_websocket_client
-        mbedtls
-        esp_event
-        nvs_flash
-        esp_netif
-        esp_wifi
-        cjson
+        ${SINRICPRO_REQUIRES}
 )

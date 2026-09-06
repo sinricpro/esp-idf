@@ -11,6 +11,8 @@
 #include "sinricpro_websocket.h"
 #include "sinricpro_signature.h"
 #include "sinricpro_message_queue.h"
+#include "sinricpro_udp.h"
+#include "sinricpro_mdns.h"
 #include <string.h>
 #include <stdio.h>
 #include "esp_log.h"
@@ -37,6 +39,10 @@ static struct {
     bool initialized;
     bool started;
     SemaphoreHandle_t mutex;
+    /* Serialises request dispatch. The websocket task and the local control
+     * task both land in the same device callbacks, which were written for a
+     * single caller. */
+    SemaphoreHandle_t dispatch_mutex;
     TaskHandle_t send_task;
 } core_state = {0};
 
@@ -45,6 +51,10 @@ static void handle_received_message(const char *data, size_t length, void *conte
 static void handle_connected(void *context);
 static void handle_disconnected(void *context);
 static void send_task_func(void *arg);
+static void process_incoming(const char *data, size_t length,
+                             const sinricpro_msg_origin_t *origin);
+static size_t build_device_ids(char *out, size_t out_len, char separator);
+static void announce_devices(void);
 
 /* ========================================================================
  * Device Management
@@ -85,6 +95,8 @@ esp_err_t sinricpro_core_register_device(sinricpro_device_t *device)
 
     ESP_LOGI(TAG, "Device registered: %s (total: %d)", device->device_id, core_state.device_count);
 
+    announce_devices();
+
     return ESP_OK;
 }
 
@@ -114,6 +126,8 @@ esp_err_t sinricpro_core_unregister_device(const char *device_id)
             ESP_LOGI(TAG, "Device unregistered: %s (remaining: %d)",
                      device_id, core_state.device_count);
 
+            announce_devices();
+
             return ESP_OK;
         }
         prev = curr;
@@ -124,6 +138,52 @@ esp_err_t sinricpro_core_unregister_device(const char *device_id)
 
     ESP_LOGW(TAG, "Device not found: %s", device_id);
     return SINRICPRO_ERR_DEVICE_NOT_FOUND;
+}
+
+/**
+ * @brief Join the registered device ids with @p separator
+ *
+ * @return Number of bytes written, excluding the terminator
+ */
+static size_t build_device_ids(char *out, size_t out_len, char separator)
+{
+    size_t offset = 0;
+
+    out[0] = '\0';
+
+    xSemaphoreTake(core_state.mutex, portMAX_DELAY);
+    for (sinricpro_device_t *device = core_state.devices;
+         device != NULL && offset + 1 < out_len;
+         device = device->next) {
+        if (offset > 0) {
+            out[offset++] = separator;
+            out[offset] = '\0';
+        }
+        int written = snprintf(out + offset, out_len - offset, "%s", device->device_id);
+        if (written < 0 || (size_t)written >= out_len - offset) {
+            break;
+        }
+        offset += (size_t)written;
+    }
+    xSemaphoreGive(core_state.mutex);
+
+    return offset;
+}
+
+/**
+ * @brief Refresh the mDNS TXT record after the device list changed
+ *
+ * No-op before start(): the record is published there with the full list.
+ */
+static void announce_devices(void)
+{
+    if (!core_state.started) {
+        return;
+    }
+
+    char device_ids[512];
+    build_device_ids(device_ids, sizeof(device_ids), ',');
+    sinricpro_mdns_update(device_ids);
 }
 
 static sinricpro_device_t* find_device(const char *device_id)
@@ -144,7 +204,7 @@ static sinricpro_device_t* find_device(const char *device_id)
  * Message Processing
  * ======================================================================== */
 
-static void handle_request(cJSON *json_message)
+static void handle_request(cJSON *json_message, const sinricpro_msg_origin_t *origin)
 {
     cJSON *payload = cJSON_GetObjectItem(json_message, "payload");
     if (payload == NULL) {
@@ -172,6 +232,12 @@ static void handle_request(cJSON *json_message)
     xSemaphoreTake(core_state.mutex, portMAX_DELAY);
     sinricpro_device_t *device = find_device(device_id);
     xSemaphoreGive(core_state.mutex);
+
+    if (device == NULL && origin != NULL &&
+        origin->transport == SINRICPRO_TRANSPORT_UDP) {
+        ESP_LOGD(TAG, "Ignoring LAN request for unknown device: %s", device_id);
+        return;
+    }
 
     /* Prepare response */
     cJSON *response = cJSON_CreateObject();
@@ -220,10 +286,83 @@ static void handle_request(cJSON *json_message)
     cJSON_AddBoolToObject(response_payload, "success", success);
     cJSON_AddStringToObject(response_payload, "message", success ? "OK" : "Device did not handle request");
 
-    /* Send response */
+    /* Queued with the origin it must go back on, so the send path can route it
+     * without knowing which peer happens to be talking to us now. */
     char *response_str = cJSON_PrintUnformatted(response);
     if (response_str) {
-        sinricpro_message_queue_push(core_state.send_queue, response_str);
+        sinricpro_message_queue_push_with_origin(core_state.send_queue,
+                                                  response_str, origin);
+        free(response_str);
+    }
+
+    cJSON_Delete(response);
+}
+
+/**
+ * @brief Answer a request whose signature did not verify
+ *
+ * Answering rather than dropping is deliberate: it lets a client tell a wrong
+ * app secret apart from an unreachable device. It does mean the device answers
+ * forged LAN packets.
+ */
+static void handle_invalid_signature(cJSON *json_message,
+                                      const sinricpro_msg_origin_t *origin)
+{
+    cJSON *payload = cJSON_GetObjectItem(json_message, "payload");
+    if (payload == NULL) {
+        return;
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    if (response == NULL) {
+        return;
+    }
+
+    cJSON *header = cJSON_CreateObject();
+    cJSON *response_payload = cJSON_CreateObject();
+
+    cJSON_AddItemToObject(response, "header", header);
+    cJSON_AddNumberToObject(header, "payloadVersion", 2);
+    cJSON_AddNumberToObject(header, "signatureVersion", 1);
+
+    cJSON_AddItemToObject(response, "payload", response_payload);
+
+    cJSON *action = cJSON_GetObjectItem(payload, "action");
+    if (cJSON_IsString(action)) {
+        cJSON_AddStringToObject(response_payload, "action", action->valuestring);
+    }
+
+    cJSON_AddNumberToObject(response_payload, "createdAt", core_state.timestamp);
+
+    cJSON *device_id = cJSON_GetObjectItem(payload, "deviceId");
+    if (cJSON_IsString(device_id)) {
+        cJSON_AddStringToObject(response_payload, "deviceId", device_id->valuestring);
+    }
+
+    cJSON *reply_token = cJSON_GetObjectItem(payload, "replyToken");
+    if (cJSON_IsString(reply_token)) {
+        cJSON_AddStringToObject(response_payload, "replyToken", reply_token->valuestring);
+    }
+
+    cJSON *client_id = cJSON_GetObjectItem(payload, "clientId");
+    if (cJSON_IsString(client_id)) {
+        cJSON_AddStringToObject(response_payload, "clientId", client_id->valuestring);
+    }
+
+    cJSON *instance_id = cJSON_GetObjectItem(payload, "instanceId");
+    if (cJSON_IsString(instance_id)) {
+        cJSON_AddStringToObject(response_payload, "instanceId", instance_id->valuestring);
+    }
+
+    cJSON_AddStringToObject(response_payload, "type", "response");
+    cJSON_AddItemToObject(response_payload, "value", cJSON_CreateObject());
+    cJSON_AddBoolToObject(response_payload, "success", false);
+    cJSON_AddStringToObject(response_payload, "message", "Signature is invalid");
+
+    char *response_str = cJSON_PrintUnformatted(response);
+    if (response_str) {
+        sinricpro_message_queue_push_with_origin(core_state.send_queue,
+                                                  response_str, origin);
         free(response_str);
     }
 
@@ -239,48 +378,59 @@ static void handle_timestamp(cJSON *json_message)
     }
 }
 
-static void handle_received_message(const char *data, size_t length, void *context)
+/**
+ * @brief Verify and dispatch one received message, whatever transport it came on
+ *
+ * LAN requests land in the same capability callbacks as cloud requests; there
+ * is no second dispatch path.
+ */
+static void process_incoming(const char *data, size_t length,
+                             const sinricpro_msg_origin_t *origin)
 {
     ESP_LOGD(TAG, "Received message (len=%zu): %.*s", length, (int)length, data);
 
-    /* Parse JSON */
     cJSON *json = cJSON_Parse(data);
     if (json == NULL) {
         ESP_LOGE(TAG, "Failed to parse JSON");
         return;
     }
 
-    /* Check for timestamp message */
+    xSemaphoreTake(core_state.dispatch_mutex, portMAX_DELAY);
+
+    /* Timestamp messages are unsigned by design. */
     if (cJSON_HasObjectItem(json, "timestamp")) {
         handle_timestamp(json);
+        xSemaphoreGive(core_state.dispatch_mutex);
         cJSON_Delete(json);
         return;
     }
 
-    /* Extract and verify signature */
     cJSON *signature_obj = cJSON_GetObjectItem(json, "signature");
-    if (signature_obj) {
-        cJSON *hmac_item = cJSON_GetObjectItem(signature_obj, "HMAC");
-        if (hmac_item && cJSON_IsString(hmac_item)) {
-            char payload_str[2048];
-            esp_err_t ret = sinricpro_extract_payload(data, payload_str, sizeof(payload_str));
-            if (ret == ESP_OK) {
-                ret = sinricpro_verify_signature(core_state.config.app_secret,
-                                                   payload_str,
-                                                   hmac_item->valuestring);
-                if (ret != ESP_OK) {
-                    ESP_LOGW(TAG, "Signature verification failed");
-                    cJSON_Delete(json);
-                    return;
-                }
-            }
-        }
+    cJSON *hmac_item = signature_obj ? cJSON_GetObjectItem(signature_obj, "HMAC") : NULL;
+
+    /* Verified against the received bytes: the sender's key order and spacing
+     * are its own, so a re-serialised object would not match. */
+    const char *payload_start = NULL;
+    size_t payload_len = 0;
+    esp_err_t ret = SINRICPRO_ERR_SIGNATURE;
+
+    if (cJSON_IsString(hmac_item) &&
+        sinricpro_extract_payload_ref(data, &payload_start, &payload_len) == ESP_OK) {
+        ret = sinricpro_verify_signature_n(core_state.config.app_secret,
+                                            payload_start, payload_len,
+                                            hmac_item->valuestring);
     }
 
-    /* Handle message based on type */
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Signature verification failed");
+        handle_invalid_signature(json, origin);
+        xSemaphoreGive(core_state.dispatch_mutex);
+        cJSON_Delete(json);
+        return;
+    }
+
     cJSON *payload = cJSON_GetObjectItem(json, "payload");
     if (payload) {
-        /* Update timestamp from payload */
         cJSON *created_at = cJSON_GetObjectItem(payload, "createdAt");
         if (created_at && cJSON_IsNumber(created_at)) {
             core_state.timestamp = (uint32_t)created_at->valuedouble;
@@ -291,15 +441,31 @@ static void handle_received_message(const char *data, size_t length, void *conte
             const char *type = type_item->valuestring;
 
             if (strcmp(type, "request") == 0) {
-                handle_request(json);
+                handle_request(json, origin);
             } else if (strcmp(type, "response") == 0) {
                 ESP_LOGD(TAG, "Received response (ignored)");
             }
         }
     }
 
+    xSemaphoreGive(core_state.dispatch_mutex);
     cJSON_Delete(json);
 }
+
+static void handle_received_message(const char *data, size_t length, void *context)
+{
+    const sinricpro_msg_origin_t origin = SINRICPRO_ORIGIN_WEBSOCKET;
+
+    process_incoming(data, length, &origin);
+}
+
+#ifdef CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL
+static void handle_udp_message(const char *data, size_t length,
+                               const sinricpro_msg_origin_t *origin, void *context)
+{
+    process_incoming(data, length, origin);
+}
+#endif
 
 /* ========================================================================
  * Event Sending
@@ -310,11 +476,16 @@ esp_err_t sinricpro_core_send_event(const char *device_id,
                                      const char *cause,
                                      cJSON *value)
 {
+    /* Ownership of `value` transfers here, so it must be released on the paths
+     * that never attach it to a message. */
     if (!core_state.started) {
+        cJSON_Delete(value);
         return SINRICPRO_ERR_NOT_STARTED;
     }
 
+    /* Events are cloud-only; local control reports state to the app itself. */
     if (!sinricpro_ws_is_connected()) {
+        cJSON_Delete(value);
         return SINRICPRO_ERR_NOT_CONNECTED;
     }
 
@@ -370,49 +541,67 @@ static void send_task_func(void *arg)
     while (core_state.started) {
         /* Wait for message in queue */
         char *message = NULL;
-        esp_err_t ret = sinricpro_message_queue_pop(core_state.send_queue,
-                                                      &message,
-                                                      pdMS_TO_TICKS(1000));
+        sinricpro_msg_origin_t origin = SINRICPRO_ORIGIN_WEBSOCKET;
+        esp_err_t ret = sinricpro_message_queue_pop_with_origin(core_state.send_queue,
+                                                                 &message, &origin,
+                                                                 pdMS_TO_TICKS(1000));
 
-        if (ret == ESP_OK && message != NULL) {
-            /* Parse and add timestamp and signature */
-            cJSON *json = cJSON_Parse(message);
-            if (json) {
-                cJSON *payload = cJSON_GetObjectItem(json, "payload");
-                if (payload) {
-                    /* Update createdAt with current timestamp */
-                    cJSON_SetNumberValue(cJSON_GetObjectItem(payload, "createdAt"),
-                                          core_state.timestamp);
-
-                    /* Calculate signature */
-                    char *payload_str = cJSON_PrintUnformatted(payload);
-                    if (payload_str) {
-                        char signature[64];
-                        ret = sinricpro_calculate_signature(core_state.config.app_secret,
-                                                             payload_str,
-                                                             signature,
-                                                             sizeof(signature));
-                        if (ret == ESP_OK) {
-                            cJSON *sig_obj = cJSON_CreateObject();
-                            cJSON_AddStringToObject(sig_obj, "HMAC", signature);
-                            cJSON_AddItemToObject(json, "signature", sig_obj);
-                        }
-                        free(payload_str);
-                    }
-
-                    /* Send via WebSocket */
-                    char *signed_message = cJSON_PrintUnformatted(json);
-                    if (signed_message) {
-                        ESP_LOGD(TAG, "Sending: %s", signed_message);
-                        sinricpro_ws_send(signed_message, 0);
-                        free(signed_message);
-                    }
-                }
-                cJSON_Delete(json);
-            }
-
-            sinricpro_message_queue_free_message(message);
+        if (ret != ESP_OK || message == NULL) {
+            continue;
         }
+
+        /* Gate per message, never on cloud state as a whole: a device that has
+         * never reached the cloud must still answer the LAN. */
+        if (origin.transport == SINRICPRO_TRANSPORT_WEBSOCKET &&
+            !sinricpro_ws_is_connected()) {
+            ESP_LOGD(TAG, "Dropping websocket message - not connected");
+            sinricpro_message_queue_free_message(message);
+            continue;
+        }
+
+        cJSON *json = cJSON_Parse(message);
+        sinricpro_message_queue_free_message(message);
+
+        if (json == NULL) {
+            ESP_LOGE(TAG, "Failed to parse queued message");
+            continue;
+        }
+
+        cJSON *payload = cJSON_GetObjectItem(json, "payload");
+        if (payload == NULL) {
+            cJSON_Delete(json);
+            continue;
+        }
+
+        /* Last mutation before signing. Nothing may touch the payload after
+         * this point or the signature no longer covers what is transmitted. */
+        cJSON_SetNumberValue(cJSON_GetObjectItem(payload, "createdAt"),
+                              core_state.timestamp);
+
+        char *signed_message = sinricpro_sign_message(core_state.config.app_secret, json);
+        cJSON_Delete(json);
+
+        if (signed_message == NULL) {
+            ESP_LOGE(TAG, "Failed to sign message");
+            continue;
+        }
+
+        ESP_LOGD(TAG, "Sending: %s", signed_message);
+
+        switch (origin.transport) {
+#ifdef CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL
+        case SINRICPRO_TRANSPORT_UDP:
+            /* LAN responses are never echoed to the cloud websocket. */
+            sinricpro_udp_send(signed_message, origin.peer_addr, origin.peer_port);
+            break;
+#endif
+        case SINRICPRO_TRANSPORT_WEBSOCKET:
+        default:
+            sinricpro_ws_send(signed_message, 0);
+            break;
+        }
+
+        free(signed_message);
     }
 
     ESP_LOGI(TAG, "Send task stopped");
@@ -451,10 +640,19 @@ esp_err_t sinricpro_init(const sinricpro_config_t *config)
         return SINRICPRO_ERR_ALREADY_STARTED;
     }
 
-    /* Create mutex */
+    /* Create mutexes */
     core_state.mutex = xSemaphoreCreateMutex();
-    if (core_state.mutex == NULL) {
+    core_state.dispatch_mutex = xSemaphoreCreateMutex();
+    if (core_state.mutex == NULL || core_state.dispatch_mutex == NULL) {
         ESP_LOGE(TAG, "Failed to create mutex");
+        if (core_state.mutex) {
+            vSemaphoreDelete(core_state.mutex);
+            core_state.mutex = NULL;
+        }
+        if (core_state.dispatch_mutex) {
+            vSemaphoreDelete(core_state.dispatch_mutex);
+            core_state.dispatch_mutex = NULL;
+        }
         return ESP_ERR_NO_MEM;
     }
 
@@ -471,6 +669,9 @@ esp_err_t sinricpro_init(const sinricpro_config_t *config)
     if (core_state.send_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create send queue");
         vSemaphoreDelete(core_state.mutex);
+        core_state.mutex = NULL;
+        vSemaphoreDelete(core_state.dispatch_mutex);
+        core_state.dispatch_mutex = NULL;
         return ESP_ERR_NO_MEM;
     }
 
@@ -497,26 +698,34 @@ esp_err_t sinricpro_start(void)
         return SINRICPRO_ERR_ALREADY_STARTED;
     }
 
-    /* Build device IDs string */
-    char device_ids[512] = {0};
-    size_t offset = 0;
+    /* The websocket takes ';' separated ids; the mDNS TXT record takes CSV. */
+    char device_ids[512];
+    build_device_ids(device_ids, sizeof(device_ids), ';');
 
-    xSemaphoreTake(core_state.mutex, portMAX_DELAY);
-    sinricpro_device_t *device = core_state.devices;
-    while (device != NULL) {
-        if (offset > 0) {
-            offset += snprintf(device_ids + offset, sizeof(device_ids) - offset, ";");
-        }
-        offset += snprintf(device_ids + offset, sizeof(device_ids) - offset, "%s", device->device_id);
-        device = device->next;
-    }
-    xSemaphoreGive(core_state.mutex);
-
-    if (strlen(device_ids) == 0) {
+    if (device_ids[0] == '\0') {
         ESP_LOGW(TAG, "No devices registered");
     }
 
     ESP_LOGI(TAG, "Device IDs: %s", device_ids);
+
+    /* Started before the cloud: local control must not depend on it. */
+    core_state.started = true;
+
+    BaseType_t task_ret = xTaskCreate(send_task_func, "sinricpro_send",
+                                        4096, NULL, 5, &core_state.send_task);
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create send task");
+        core_state.started = false;
+        return ESP_FAIL;
+    }
+
+#ifdef CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL
+    if (sinricpro_udp_start(handle_udp_message, NULL) == ESP_OK) {
+        char mdns_ids[512];
+        build_device_ids(mdns_ids, sizeof(mdns_ids), ',');
+        sinricpro_mdns_start(mdns_ids);
+    }
+#endif
 
     /* Initialize WebSocket */
     sinricpro_ws_callbacks_t ws_callbacks = {
@@ -531,28 +740,18 @@ esp_err_t sinricpro_start(void)
                                         core_state.config.app_key,
                                         device_ids,
                                         &ws_callbacks);
+    /* An unreachable cloud is not a startup failure: the reconnect is armed and
+     * local control is already serving. Callers check sinricpro_is_connected().
+     * Only an invalid configuration is fatal. */
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize WebSocket: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    /* Start WebSocket */
-    ret = sinricpro_ws_start();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start WebSocket: %s", esp_err_to_name(ret));
-        sinricpro_ws_deinit();
-        return ret;
-    }
-
-    /* Create send task */
-    core_state.started = true;
-    BaseType_t task_ret = xTaskCreate(send_task_func, "sinricpro_send",
-                                        4096, NULL, 5, &core_state.send_task);
-    if (task_ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create send task");
-        core_state.started = false;
-        sinricpro_ws_deinit();
-        return ESP_FAIL;
+        ESP_LOGE(TAG, "Failed to initialize WebSocket: %s, continuing without the cloud",
+                 esp_err_to_name(ret));
+    } else {
+        ret = sinricpro_ws_start();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start WebSocket: %s, continuing without the cloud",
+                     esp_err_to_name(ret));
+        }
     }
 
     ESP_LOGI(TAG, "SinricPro started");
@@ -580,6 +779,11 @@ esp_err_t sinricpro_stop(void)
         core_state.send_task = NULL;
     }
 
+#ifdef CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL
+    sinricpro_mdns_stop();
+    sinricpro_udp_stop();
+#endif
+
     /* Stop WebSocket */
     sinricpro_ws_stop();
     sinricpro_ws_deinit();
@@ -604,10 +808,15 @@ esp_err_t sinricpro_deinit(void)
         core_state.send_queue = NULL;
     }
 
-    /* Delete mutex */
+    /* Delete mutexes */
     if (core_state.mutex) {
         vSemaphoreDelete(core_state.mutex);
         core_state.mutex = NULL;
+    }
+
+    if (core_state.dispatch_mutex) {
+        vSemaphoreDelete(core_state.dispatch_mutex);
+        core_state.dispatch_mutex = NULL;
     }
 
     core_state.initialized = false;
@@ -624,6 +833,15 @@ bool sinricpro_is_connected(void)
     }
 
     return sinricpro_ws_is_connected();
+}
+
+bool sinricpro_local_control_is_running(void)
+{
+#ifdef CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL
+    return sinricpro_udp_is_running();
+#else
+    return false;
+#endif
 }
 
 uint32_t sinricpro_get_timestamp(void)

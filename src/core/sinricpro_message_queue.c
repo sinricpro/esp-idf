@@ -29,6 +29,7 @@ struct sinricpro_message_queue {
 typedef struct {
     char *message;
     size_t length;
+    sinricpro_msg_origin_t origin;
 } queue_message_t;
 
 sinricpro_message_queue_handle_t sinricpro_message_queue_create(size_t max_size)
@@ -61,6 +62,13 @@ sinricpro_message_queue_handle_t sinricpro_message_queue_create(size_t max_size)
 esp_err_t sinricpro_message_queue_push(sinricpro_message_queue_handle_t handle,
                                         const char *message)
 {
+    return sinricpro_message_queue_push_with_origin(handle, message, NULL);
+}
+
+esp_err_t sinricpro_message_queue_push_with_origin(sinricpro_message_queue_handle_t handle,
+                                                    const char *message,
+                                                    const sinricpro_msg_origin_t *origin)
+{
     if (handle == NULL || message == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -83,7 +91,8 @@ esp_err_t sinricpro_message_queue_push(sinricpro_message_queue_handle_t handle,
 
     queue_message_t queue_msg = {
         .message = msg_copy,
-        .length = msg_len
+        .length = msg_len,
+        .origin = origin ? *origin : SINRICPRO_ORIGIN_WEBSOCKET
     };
 
     /* Push to queue */
@@ -103,6 +112,14 @@ esp_err_t sinricpro_message_queue_pop(sinricpro_message_queue_handle_t handle,
                                        char **message,
                                        TickType_t timeout)
 {
+    return sinricpro_message_queue_pop_with_origin(handle, message, NULL, timeout);
+}
+
+esp_err_t sinricpro_message_queue_pop_with_origin(sinricpro_message_queue_handle_t handle,
+                                                   char **message,
+                                                   sinricpro_msg_origin_t *origin,
+                                                   TickType_t timeout)
+{
     if (handle == NULL || message == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -114,6 +131,9 @@ esp_err_t sinricpro_message_queue_pop(sinricpro_message_queue_handle_t handle,
     }
 
     *message = queue_msg.message;
+    if (origin != NULL) {
+        *origin = queue_msg.origin;
+    }
 
     ESP_LOGD(TAG, "Message popped from queue (len=%zu, queue_size=%d)",
              queue_msg.length, uxQueueMessagesWaiting(handle->queue));
