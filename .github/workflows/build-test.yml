@@ -58,14 +58,17 @@ jobs:
           idf.py size
 
   # Camera live view. The example's board profiles cover ESP32 and ESP32-S3 only,
-  # so it cannot join the main matrix's S2 and C3 targets.
+  # so it cannot join the main matrix's S2 and C3 targets. esp_peer ships a
+  # prebuilt library that links only against ESP-IDF 5.5 or later, so 5.5 is the
+  # floor this job proves, alongside the current release.
   build-camera:
     runs-on: ubuntu-latest
     container:
-      image: espressif/idf:v5.1
+      image: espressif/idf:${{ matrix.idf-version }}
     strategy:
       fail-fast: false
       matrix:
+        idf-version: [v5.5, v6.1]
         idf-target: [esp32, esp32s3]
 
     steps:
@@ -78,7 +81,7 @@ jobs:
         run: |
           find . -type d -name "managed_components" -exec rm -rf {} + || true
 
-      - name: Build camera for ${{ matrix.idf-target }}
+      - name: Build camera for ${{ matrix.idf-target }} on ${{ matrix.idf-version }}
         working-directory: examples/camera
         run: |
           . $IDF_PATH/export.sh

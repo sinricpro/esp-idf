@@ -51,7 +51,7 @@ All devices below have complete API support and working examples:
 - ✅ **Speaker** - Volume, mute, media control, equalizer, modes
 
 ### Cameras
-- ✅ **Camera** - WebRTC live view in the SinricPro portal and app, with remote resolution, frame rate and flash control
+- ✅ **Camera** - WebRTC live view in the SinricPro portal and app, with remote resolution, frame rate and flash control (example needs ESP-IDF 5.5+)
 
 ### Additional Devices (API Only)
 - ✅ Air Quality Sensor - PM1, PM2.5, PM10 measurements

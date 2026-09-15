@@ -4,7 +4,7 @@ Streams an ESP32 or ESP32-S3 camera to the SinricPro portal and app, from anywhe
 
 ## Requirements
 
-- ESP-IDF 5.1 or later
+- ESP-IDF 5.5 or later. `esp_peer` includes a prebuilt library that links only against 5.5 and newer.
 - An ESP32 or ESP32-S3 camera board **with PSRAM**
 - 4 MB of flash or more
 - A Wi-Fi signal of **−75 dBm or better** at the board. Below about −80 dBm the Wi-Fi driver's transmit buffers stop recycling fast enough and the DTLS handshake cannot complete, even though free heap looks healthy.

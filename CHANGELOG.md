@@ -11,7 +11,9 @@
 - feat: `examples/camera` streams JPEG frames over a WebRTC DataChannel through a
   `webrtc_camera` component built on `esp_peer`, with resolution, frame rate,
   flash, flip and mirror controls, automatic quality, and the XIAO ESP32S3 Sense
-  microphone. The SinricPro component itself gains no dependencies.
+  microphone. The SinricPro component itself gains no dependencies. The example
+  needs ESP-IDF 5.5 or later, because `esp_peer`'s prebuilt library links only
+  against 5.5 and newer.
 - feat: `sinricpro_set_response_message()`, so a callback can tell the client why
   a request failed.
 - feat: Kconfig `SINRICPRO_MAX_MESSAGE_SIZE` (default 16 KB).
