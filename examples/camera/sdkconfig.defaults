@@ -14,6 +14,10 @@ CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
 CONFIG_MBEDTLS_SSL_DTLS_SRTP=y
 CONFIG_MBEDTLS_X509_CREATE_C=y
 
+# esp_peer always compiles its TLS server transport. On ESP-IDF 5.x that API is
+# declared only with this option; 6.x declares it unconditionally and ignores the line.
+CONFIG_ESP_TLS_SERVER=y
+
 # esp_peer and the camera driver do not fit the default 1 MB app partition.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
