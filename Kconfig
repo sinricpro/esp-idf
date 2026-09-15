@@ -69,6 +69,16 @@ menu "SinricPro Configuration"
             Maximum number of messages that can be queued
             for sending.
 
+    config SINRICPRO_MAX_MESSAGE_SIZE
+        int "Maximum incoming message size (bytes)"
+        default 16384
+        range 2048 65536
+        help
+            Largest server message the SDK reassembles. The websocket client
+            delivers frames in 2 KB pieces; a message above this limit is
+            dropped whole rather than parsed in fragments. A camera WebRTC
+            offer carries SDP plus TURN credentials and needs several KB.
+
     config SINRICPRO_AUTO_RECONNECT
         bool "Enable auto-reconnection"
         default y

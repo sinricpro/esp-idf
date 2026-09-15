@@ -13,6 +13,7 @@ Official ESP-IDF component for [SinricPro](https://sinric.pro) - Control your ES
 - ✅ **Voice Control** - Works with Alexa and Google Home
 - ✅ **Real-time** - WebSocket-based bidirectional communication
 - ✅ **Local Control** - Answers the app over the LAN when the cloud is down
+- ✅ **Camera Live View** - WebRTC streaming to the SinricPro portal and app
 - ✅ **Secure** - HMAC-SHA256 message signatures
 - ✅ **Reliable** - Auto-reconnection and heartbeat monitoring
 - ✅ **Event-driven** - ESP event loop integration
@@ -48,6 +49,9 @@ All devices below have complete API support and working examples:
 ### Media Devices
 - ✅ **TV** - Volume, mute, media control, input selection, channels
 - ✅ **Speaker** - Volume, mute, media control, equalizer, modes
+
+### Cameras
+- ✅ **Camera** - WebRTC live view in the SinricPro portal and app, with remote resolution, frame rate and flash control
 
 ### Additional Devices (API Only)
 - ✅ Air Quality Sensor - PM1, PM2.5, PM10 measurements
@@ -125,6 +129,7 @@ The component includes **13 complete working examples** demonstrating all device
 | [Blinds](examples/blinds/) | Motorized blinds/curtains | ⭐⭐⭐ Complex | DC motor, L298N |
 | [TV](examples/tv/) | Media control & channels | ⭐⭐⭐ Complex | Simulated/IR |
 | [Speaker](examples/speaker/) | Audio control & equalizer | ⭐⭐⭐ Complex | Simulated |
+| [Camera](examples/camera/) | WebRTC live view in the portal and app | ⭐⭐⭐ Complex | ESP32/ESP32-S3 camera with PSRAM |
 
 Each example includes:
 - Complete working code

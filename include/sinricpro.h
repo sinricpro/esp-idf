@@ -146,6 +146,23 @@ bool sinricpro_local_control_is_running(void);
 uint32_t sinricpro_get_timestamp(void);
 
 /**
+ * @brief Set the message returned with the response to the request being handled
+ *
+ * Replaces the default "OK" / "Device did not handle request", so a client can
+ * show why a request failed, e.g. "Camera timed out creating the WebRTC answer".
+ *
+ * @param[in] message Message text; truncated to 191 characters
+ *
+ * @return
+ *     - ESP_OK: Success
+ *     - SINRICPRO_ERR_INVALID_ARG: NULL message
+ *
+ * @note Call only from inside a device callback. It applies to the response
+ *       being built for that request and is cleared before the next one.
+ */
+esp_err_t sinricpro_set_response_message(const char *message);
+
+/**
  * @brief Get version string
  *
  * @return Version string in format "X.Y.Z"

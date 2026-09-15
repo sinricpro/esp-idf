@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Build and run the host tests for the signing / verification wire contract.
+# Build and run the host tests for the SDK's wire contracts: message signing and
+# verification, websocket message reassembly, and camera WebRTC signaling.
 #
-# Compiles the real src/core/sinricpro_signature.c off-target against shim
-# headers (OpenSSL stands in for mbedTLS), so what is tested is the shipped
-# source rather than a re-implementation of it.
+# Compiles the real sources off-target against shim headers (OpenSSL stands in
+# for mbedTLS), so what is tested is the shipped source rather than a
+# re-implementation of it.
 #
 #   test/host/run.sh
 #
@@ -25,11 +26,14 @@ fi
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
-gcc -std=c11 -Wall -Wextra -Wno-unused-parameter -O1 -g \
-    -I "$here/shims" \
-    -I "$root/src/core" \
-    -I "$root/include" \
-    -I "$cjson_dir" \
+cflags=(-std=c11 -Wall -Wextra -Wno-unused-parameter -O1 -g
+        -I "$here/shims"
+        -I "$root/src/core"
+        -I "$root/src/capabilities"
+        -I "$root/include"
+        -I "$cjson_dir")
+
+gcc "${cflags[@]}" \
     "$here/test_signature.c" \
     "$here/shims/shims.c" \
     "$root/src/core/sinricpro_signature.c" \
@@ -37,4 +41,22 @@ gcc -std=c11 -Wall -Wextra -Wno-unused-parameter -O1 -g \
     -lcrypto -lm \
     -o "$out/test_signature"
 
-"$out/test_signature"
+gcc "${cflags[@]}" \
+    "$here/test_frame_assembler.c" \
+    "$root/src/core/sinricpro_frame_assembler.c" \
+    -o "$out/test_frame_assembler"
+
+gcc "${cflags[@]}" \
+    "$here/test_camera_controller.c" \
+    "$here/shims/shims.c" \
+    "$root/src/capabilities/camera_controller.c" \
+    "$cjson_dir/cJSON.c" \
+    -lcrypto -lm \
+    -o "$out/test_camera_controller"
+
+status=0
+for test in test_signature test_frame_assembler test_camera_controller; do
+    echo "== $test"
+    "$out/$test" || status=1
+done
+exit "$status"

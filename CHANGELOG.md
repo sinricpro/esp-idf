@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- feat: camera device with WebRTC live view in the SinricPro portal and app.
+  `sinricpro_camera_on_webrtc_offer()` answers `getWebRTCAnswer` using the ICE
+  servers the server sends, and `getCameraCapabilities` reports `webrtc` and
+  `webrtcAudio` so viewers know what the firmware supports.
+- feat: `examples/camera` streams JPEG frames over a WebRTC DataChannel through a
+  `webrtc_camera` component built on `esp_peer`, with resolution, frame rate,
+  flash, flip and mirror controls, automatic quality, and the XIAO ESP32S3 Sense
+  microphone. The SinricPro component itself gains no dependencies.
+- feat: `sinricpro_set_response_message()`, so a callback can tell the client why
+  a request failed.
+- feat: Kconfig `SINRICPRO_MAX_MESSAGE_SIZE` (default 16 KB).
+
+### Fixes
+
+- fix: a server message larger than the websocket client's 2 KB buffer is posted
+  as several data events, and each piece was parsed as a complete message, so the
+  message was lost. The pieces are now reassembled.
+- fix: ping, pong and close frames are no longer handed to the JSON parser.
+
 ## [1.3.0]
 
 ### Features

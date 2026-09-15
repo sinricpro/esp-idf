@@ -13,6 +13,10 @@ esp_err_t sinricpro_deinit(void);
 bool sinricpro_is_connected(void);
 uint32_t sinricpro_get_timestamp(void);
 const char* sinricpro_get_version(void);
+
+/* From inside a device callback: replace the response's "OK" /
+ * "Device did not handle request" text with a reason the client can show. */
+esp_err_t sinricpro_set_response_message(const char *message);
 ```
 
 #### Configuration Structure
@@ -87,6 +91,46 @@ esp_err_t sinricpro_switch_send_notification(
 );
 ```
 
+### Camera Device API
+
+Live view in the SinricPro portal and app over WebRTC. The component handles
+signaling; the peer connection and streaming live in the `webrtc_camera`
+component of [examples/camera](../examples/camera/).
+
+```c
+sinricpro_device_handle_t sinricpro_camera_create(const char *device_id);
+esp_err_t sinricpro_camera_delete(sinricpro_device_handle_t device);
+
+esp_err_t sinricpro_camera_on_power_state(sinricpro_device_handle_t device,
+                                          sinricpro_camera_power_state_callback_t callback,
+                                          void *user_data);
+
+/* One entry per URL; strings are valid only during the callback. */
+typedef struct {
+    const char *url;         /* "stun:…", "turn:…?transport=udp", "turns:…:443?transport=tcp" */
+    const char *username;    /* "" when none */
+    const char *credential;  /* "" when none */
+} sinricpro_ice_server_t;
+
+/* Set *answer_sdp to a malloc()ed SDP answer containing every local candidate;
+ * the SDK frees it. May block while ICE gathers (up to ~5 s). */
+typedef bool (*sinricpro_camera_webrtc_offer_callback_t)(
+    const char *device_id, const char *offer_sdp,
+    const sinricpro_ice_server_t *ice_servers, size_t ice_server_count,
+    char **answer_sdp, void *user_data);
+
+/* Registering the callback makes getCameraCapabilities report webrtc: true. */
+esp_err_t sinricpro_camera_on_webrtc_offer(sinricpro_device_handle_t device,
+                                           sinricpro_camera_webrtc_offer_callback_t callback,
+                                           void *user_data);
+
+/* Reported as webrtcAudio, so viewers request an audio track. */
+esp_err_t sinricpro_camera_enable_webrtc_audio(sinricpro_device_handle_t device, bool enabled);
+
+esp_err_t sinricpro_camera_send_power_state_event(sinricpro_device_handle_t device,
+                                                  bool state, const char *cause);
+```
+
 ### Event System
 
 ```c
@@ -122,6 +166,7 @@ Access via `idf.py menuconfig` → `Component config` → `SinricPro Configurati
 - **Enable Debug Logging** - Verbose logging for troubleshooting
 - **Event Queue Size** - Maximum queued events
 - **Message Queue Size** - Maximum queued messages
+- **Maximum Incoming Message Size** - Largest reassembled server message (default 16 KB; camera offers need several KB)
 - **Auto-reconnection** - Enable/disable auto-reconnection
 - **Reconnection Interval** - Time between reconnection attempts
 - **Max Devices** - Maximum number of registered devices

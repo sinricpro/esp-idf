@@ -44,6 +44,10 @@ static struct {
      * single caller. */
     SemaphoreHandle_t dispatch_mutex;
     TaskHandle_t send_task;
+    /* Overrides the message of the response being built. Cleared before each
+     * handler runs and written only from inside one, which dispatch_mutex
+     * serialises. */
+    char response_message[192];
 } core_state = {0};
 
 /* Forward declarations */
@@ -273,6 +277,7 @@ static void handle_request(cJSON *json_message, const sinricpro_msg_origin_t *or
     cJSON_AddItemToObject(response_payload, "value", response_value);
 
     bool success = false;
+    core_state.response_message[0] = '\0';
 
     if (device != NULL && device->request_handler != NULL) {
         /* Call device request handler */
@@ -284,7 +289,10 @@ static void handle_request(cJSON *json_message, const sinricpro_msg_origin_t *or
     }
 
     cJSON_AddBoolToObject(response_payload, "success", success);
-    cJSON_AddStringToObject(response_payload, "message", success ? "OK" : "Device did not handle request");
+    const char *message = core_state.response_message[0] != '\0'
+                              ? core_state.response_message
+                              : (success ? "OK" : "Device did not handle request");
+    cJSON_AddStringToObject(response_payload, "message", message);
 
     /* Queued with the origin it must go back on, so the send path can route it
      * without knowing which peer happens to be talking to us now. */
@@ -847,6 +855,16 @@ bool sinricpro_local_control_is_running(void)
 uint32_t sinricpro_get_timestamp(void)
 {
     return core_state.timestamp;
+}
+
+esp_err_t sinricpro_set_response_message(const char *message)
+{
+    if (message == NULL) {
+        return SINRICPRO_ERR_INVALID_ARG;
+    }
+
+    strlcpy(core_state.response_message, message, sizeof(core_state.response_message));
+    return ESP_OK;
 }
 
 const char* sinricpro_get_version(void)
