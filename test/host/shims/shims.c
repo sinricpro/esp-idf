@@ -122,3 +122,71 @@ int mbedtls_base64_encode(unsigned char *dst, size_t dlen, size_t *olen,
 
     return 0;
 }
+
+static int base64_value(unsigned char c)
+{
+    if (c >= 'A' && c <= 'Z') {
+        return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z') {
+        return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9') {
+        return c - '0' + 52;
+    }
+    if (c == '+') {
+        return 62;
+    }
+    return c == '/' ? 63 : -1;
+}
+
+/* Mirrors mbedTLS: an empty input decodes to nothing, and a NULL or short
+ * buffer reports the size needed through olen with BUFFER_TOO_SMALL. */
+int mbedtls_base64_decode(unsigned char *dst, size_t dlen, size_t *olen,
+                          const unsigned char *src, size_t slen)
+{
+    if (slen == 0) {
+        *olen = 0;
+        return 0;
+    }
+    if (slen % 4 != 0) {
+        return MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+    }
+
+    size_t pad = 0;
+    while (pad < 2 && src[slen - 1 - pad] == '=') {
+        pad++;
+    }
+    for (size_t i = 0; i < slen - pad; i++) {
+        if (base64_value(src[i]) < 0) {
+            return MBEDTLS_ERR_BASE64_INVALID_CHARACTER;
+        }
+    }
+
+    size_t need = slen / 4 * 3 - pad;
+    if (dst == NULL || dlen < need) {
+        *olen = need;
+        return MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL;
+    }
+
+    size_t o = 0;
+    for (size_t i = 0; i < slen; i += 4) {
+        unsigned v = 0;
+        for (int k = 0; k < 4; k++) {
+            unsigned char c = src[i + k];
+            v = (v << 6) | (c == '=' ? 0u : (unsigned)base64_value(c));
+        }
+        if (o < need) {
+            dst[o++] = (unsigned char)(v >> 16);
+        }
+        if (o < need) {
+            dst[o++] = (unsigned char)(v >> 8);
+        }
+        if (o < need) {
+            dst[o++] = (unsigned char)v;
+        }
+    }
+
+    *olen = need;
+    return 0;
+}

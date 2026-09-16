@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "webrtc_camera.c"
+        "jpeg_streamer.c"
+        "camera_controls.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_peer
+        esp32-camera
+    PRIV_REQUIRES
+        cjson
+        esp_driver_gpio
+        esp_timer
+        esp_wifi
+)

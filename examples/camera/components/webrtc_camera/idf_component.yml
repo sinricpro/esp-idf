@@ -1,0 +1,11 @@
+description: "SinricPro WebRTC live view for ESP32 cameras: JPEG frames over a DataChannel"
+dependencies:
+  # esp_peer's prebuilt library calls esp_log(), which ESP-IDF added in 5.5.
+  idf:
+    version: ">=5.5"
+  espressif/esp_peer:
+    version: "^1.5.5"
+  espressif/esp32-camera:
+    version: "^2.1.7"
+  espressif/cjson:
+    version: "*"

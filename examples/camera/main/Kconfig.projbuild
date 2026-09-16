@@ -1,0 +1,58 @@
+menu "SinricPro Camera Example"
+
+    choice CAMERA_BOARD
+        prompt "Camera board"
+        default CAMERA_BOARD_AI_THINKER if IDF_TARGET_ESP32
+        default CAMERA_BOARD_XIAO_S3_SENSE if IDF_TARGET_ESP32S3
+        help
+            Selects the camera pin mapping. The processor alone does not
+            identify the wiring, so choose the actual board.
+
+        config CAMERA_BOARD_AI_THINKER
+            bool "AI-Thinker ESP32-CAM"
+            depends on IDF_TARGET_ESP32
+        config CAMERA_BOARD_ESP_EYE
+            bool "ESP-EYE"
+            depends on IDF_TARGET_ESP32
+        config CAMERA_BOARD_M5CAMERA
+            bool "M5Camera model A"
+            depends on IDF_TARGET_ESP32
+        config CAMERA_BOARD_M5CAMERA_B
+            bool "M5Camera model B"
+            depends on IDF_TARGET_ESP32
+        config CAMERA_BOARD_WROVER_KIT
+            bool "ESP-WROVER-KIT"
+            depends on IDF_TARGET_ESP32
+        config CAMERA_BOARD_LILYGO_CAMERA
+            bool "LILYGO TTGO T-Camera (camera only)"
+            depends on IDF_TARGET_ESP32
+        config CAMERA_BOARD_XIAO_S3_SENSE
+            bool "XIAO ESP32S3 Sense"
+            depends on IDF_TARGET_ESP32S3
+        config CAMERA_BOARD_FREENOVE_S3
+            bool "Freenove ESP32-S3 camera board"
+            depends on IDF_TARGET_ESP32S3
+        config CAMERA_BOARD_ESP32S3_WROOM
+            bool "ESP32-S3 WROOM camera wiring (PWDN GPIO38)"
+            depends on IDF_TARGET_ESP32S3
+        config CAMERA_BOARD_ESP32S3_GOOUUU
+            bool "GOOUUU ESP32-S3 camera wiring"
+            depends on IDF_TARGET_ESP32S3
+    endchoice
+
+    config CAMERA_FLASH_GPIO
+        int "Flash LED GPIO (-1 for none)"
+        range -1 48
+        default 4 if CAMERA_BOARD_AI_THINKER
+        default -1
+        help
+            Exposes a flash toggle to viewers when set.
+
+    config CAMERA_MICROPHONE
+        bool "Stream the onboard PDM microphone"
+        depends on CAMERA_BOARD_XIAO_S3_SENSE
+        default y
+        help
+            Sends an 8 kHz PCMU audio track alongside the video.
+
+endmenu

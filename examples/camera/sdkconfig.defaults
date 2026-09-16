@@ -1,0 +1,20 @@
+# Camera frame buffers, and Wi-Fi, lwIP and mbedTLS allocations, go to PSRAM.
+# Moving the Wi-Fi and lwIP buffers out of internal RAM is what keeps classic
+# ESP32's scarce contiguous internal memory free for the driver's TX path.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=256
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# The streamer sends one DataChannel fragment per tick.
+CONFIG_FREERTOS_HZ=1000
+
+# WebRTC transport: DTLS-SRTP, and a self-signed certificate for the DTLS fingerprint.
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_SSL_DTLS_SRTP=y
+CONFIG_MBEDTLS_X509_CREATE_C=y
+
+# esp_peer and the camera driver do not fit the default 1 MB app partition.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

@@ -8,10 +8,12 @@
 
 #include "sinricpro_websocket.h"
 #include "sinricpro.h"
+#include "sinricpro_frame_assembler.h"
 #include <string.h>
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_websocket_client.h"
+#include "esp_transport_ws.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_crt_bundle.h"
@@ -30,6 +32,8 @@ static struct {
     bool initialized;
     bool connected;
     SemaphoreHandle_t mutex;
+    /* Only touched from the websocket task, which delivers events in order. */
+    sinricpro_frame_assembler_t assembler;
 } ws_state = {0};
 
 /**
@@ -43,6 +47,7 @@ static void websocket_event_handler(void *arg, esp_event_base_t event_base,
     switch (event_id) {
     case WEBSOCKET_EVENT_CONNECTED:
         ESP_LOGI(TAG, "WebSocket connected");
+        sinricpro_frame_assembler_reset(&ws_state.assembler);
         xSemaphoreTake(ws_state.mutex, portMAX_DELAY);
         ws_state.connected = true;
         xSemaphoreGive(ws_state.mutex);
@@ -54,6 +59,8 @@ static void websocket_event_handler(void *arg, esp_event_base_t event_base,
 
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "WebSocket disconnected");
+        /* A message cut off by the disconnect can never be completed. */
+        sinricpro_frame_assembler_reset(&ws_state.assembler);
         xSemaphoreTake(ws_state.mutex, portMAX_DELAY);
         ws_state.connected = false;
         xSemaphoreGive(ws_state.mutex);
@@ -63,27 +70,33 @@ static void websocket_event_handler(void *arg, esp_event_base_t event_base,
         }
         break;
 
-    case WEBSOCKET_EVENT_DATA:
-        ESP_LOGD(TAG, "WebSocket data received (len=%d)", data->data_len);
+    case WEBSOCKET_EVENT_DATA: {
+        ESP_LOGD(TAG, "WebSocket data received (len=%d, offset=%d, total=%d)",
+                 data->data_len, data->payload_offset, data->payload_len);
 
-        if (data->data_len > 0 && data->data_ptr != NULL) {
-            /* Null-terminate the data */
-            char *message = malloc(data->data_len + 1);
-            if (message) {
-                memcpy(message, data->data_ptr, data->data_len);
-                message[data->data_len] = '\0';
+        /* Ping, pong and close frames carry no SinricPro message. Every piece of
+         * a text frame is posted with the frame's own opcode. */
+        if (data->op_code != WS_TRANSPORT_OPCODES_TEXT || data->data_len < 0 ||
+            data->payload_offset < 0 || data->payload_len < 0) {
+            break;
+        }
 
-                if (ws_state.callbacks.on_receive) {
-                    ws_state.callbacks.on_receive(message, data->data_len,
-                                                   ws_state.callbacks.context);
-                }
+        const char *message = NULL;
+        size_t message_len = 0;
+        sinricpro_frame_result_t result = sinricpro_frame_assembler_feed(
+            &ws_state.assembler, data->data_ptr, (size_t)data->data_len,
+            (size_t)data->payload_offset, (size_t)data->payload_len,
+            &message, &message_len);
 
-                free(message);
-            } else {
-                ESP_LOGE(TAG, "Failed to allocate memory for received message");
-            }
+        if (result == SINRICPRO_FRAME_DROPPED) {
+            ESP_LOGE(TAG, "Dropped a %d byte message: above CONFIG_SINRICPRO_MAX_MESSAGE_SIZE (%d), "
+                          "out of memory, or received out of sequence",
+                     data->payload_len, CONFIG_SINRICPRO_MAX_MESSAGE_SIZE);
+        } else if (result == SINRICPRO_FRAME_COMPLETE && ws_state.callbacks.on_receive) {
+            ws_state.callbacks.on_receive(message, message_len, ws_state.callbacks.context);
         }
         break;
+    }
 
     case WEBSOCKET_EVENT_ERROR:
         ESP_LOGE(TAG, "WebSocket error");
@@ -166,6 +179,8 @@ esp_err_t sinricpro_ws_init(const char *server_url,
 
     /* Save callbacks */
     memcpy(&ws_state.callbacks, callbacks, sizeof(sinricpro_ws_callbacks_t));
+
+    sinricpro_frame_assembler_init(&ws_state.assembler, CONFIG_SINRICPRO_MAX_MESSAGE_SIZE);
 
     /* Configure WebSocket client */
     esp_websocket_client_config_t ws_config = {
@@ -266,6 +281,9 @@ esp_err_t sinricpro_ws_deinit(void)
         esp_websocket_client_destroy(ws_state.client);
         ws_state.client = NULL;
     }
+
+    /* The client task is gone, so nothing can feed the assembler any more. */
+    sinricpro_frame_assembler_free(&ws_state.assembler);
 
     /* Free URI */
     if (ws_state.uri) {

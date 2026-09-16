@@ -1,0 +1,4 @@
+# XIAO ESP32S3 Sense and the Freenove N8R8 carry octal PSRAM. A board with quad
+# PSRAM needs CONFIG_SPIRAM_MODE_QUAD instead, or PSRAM fails to start at boot.
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
