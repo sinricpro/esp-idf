@@ -66,11 +66,16 @@ The firmware supports both, and the viewer's offer decides which one a session u
 | | H.264 track | JPEG over the DataChannel |
 | --- | --- | --- |
 | Targets | ESP32-S3 (`CONFIG_CAMERA_H264`, on by default) | every target |
-| Resolution | 320x240 | up to SVGA |
-| Frame rate | about 10 fps | a few fps, higher at small sizes |
+| Resolution | 320x240 or 640x480 | up to SVGA |
+| Frame rate | about 3 fps at 320x240, 1 fps at 640x480 | a few fps, higher at small sizes |
 | Playback | a normal video element | frames reassembled and drawn by the viewer |
+| Alexa and Google Home | yes, at 640x480 | no |
 
-`esp_h264` encodes in software on the S3, which is what caps the resolution; Espressif measures about 11 fps at 320x240. Encoding runs on its own task on the second core, so it does not disturb ICE, DTLS or the audio track.
+`esp_h264` encodes in software on the S3, and that is the limit on both size and rate. Measured on a XIAO ESP32S3 Sense: about 300 ms per frame at 320x240 and a second or more at 640x480, because openh264's working set no longer fits internal RAM at the larger size and the encoder runs against PSRAM. Each size therefore declares the rate it can actually hold rather than an aspirational one, since rate control divides the bitrate by that figure: claiming 10 fps while delivering 1 made it compress roughly five times harder than the link required.
+
+Encoding runs on its own task pinned to the second core, and the session task is pinned to the first. Sharing a core starves the idle task and trips the task watchdog, as well as slowing the encoder.
+
+Viewers choose the resolution through the normal resolution control, which rebuilds the encoder mid-session; the next IDR carries the new SPS. A viewer with no DataChannel is a smart display, which cannot use that control and refuses anything below 480p, so those sessions start at 640x480.
 
 The camera switches to YUV422 for an H.264 session and back to JPEG afterwards, so the sensor is re-initialised when a viewer connects and again when it leaves.
 
@@ -96,6 +101,7 @@ The software encoder cannot produce a keyframe on demand, so a viewer's keyframe
 
 ## Limits
 
-- Portal and app only. Alexa and Google Home streaming stays disabled for these cameras in the SinricPro cloud.
+- Amazon Alexa and Google Home need the H.264 track, so they work on ESP32-S3 only, and only with **H.264 video track** ticked in the portal's Camera Stream Configuration. Both were verified against an Echo and a Chromecast with Google TV at 640x480, which is the smallest size either accepts — around 1 fps, so the picture is slow. A board with a hardware encoder is the answer for a usable smart-display stream.
+- Classic ESP32 streams JPEG over the DataChannel and stays portal and app only.
 - WebRTC signaling needs the cloud connection: local control's UDP transport cannot carry an offer.
 - Motion upload is not implemented yet. Snapshots are: the example answers `getSnapshot`, and during an H.264 session it compresses the YUV422 frame with `frame2jpg()` before uploading. The server accepts at most 512 KB per image.
