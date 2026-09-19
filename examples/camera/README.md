@@ -1,6 +1,6 @@
 # Camera Example (WebRTC live view)
 
-Streams an ESP32 or ESP32-S3 camera to the SinricPro portal and app, from anywhere. Video is JPEG over an encrypted WebRTC DataChannel; signaling runs through the SinricPro connection, and STUN/TURN servers arrive with each viewer's offer, so viewing works outside your LAN. Viewers can change resolution and frame rate and toggle flash, flip and mirror, and quality drops automatically on slow links. XIAO ESP32S3 Sense also streams its onboard microphone.
+Streams an ESP32 or ESP32-S3 camera to the SinricPro portal and app, from anywhere. On ESP32-S3 the video is H.264 on a normal WebRTC video track; elsewhere, and for viewers that ask for it, it is JPEG over the encrypted DataChannel. Signaling runs through the SinricPro connection, and STUN/TURN servers arrive with each viewer's offer, so viewing works outside your LAN. Viewers can change resolution and frame rate and toggle flash, flip and mirror, and quality drops automatically on slow links. XIAO ESP32S3 Sense also streams its onboard microphone.
 
 ## Requirements
 
@@ -52,12 +52,31 @@ Open **Preview** on the camera in the portal, or tap the camera in the app.
 | Piece | Where |
 | --- | --- |
 | `getCameraCapabilities`, `getWebRTCAnswer` | SinricPro component: `sinricpro_camera_on_webrtc_offer()` |
-| Peer connection, JPEG streaming, viewer controls | [components/webrtc_camera](components/webrtc_camera/), built on Espressif's `esp_peer` |
+| Peer connection, H.264 and JPEG streaming, viewer controls | [components/webrtc_camera](components/webrtc_camera/), built on Espressif's `esp_peer` |
 | Pin mappings | [main/camera_boards.c](main/camera_boards.c) |
 
 The SinricPro component itself does not depend on `esp_peer` or `esp32-camera`; the `webrtc_camera` component can be copied into your own project.
 
 Signaling is a single offer/answer exchange without trickle ICE, so the session gathers every local candidate before answering, and the answer callback blocks for up to about 5 seconds. One viewer is served at a time; a new offer replaces the current viewer.
+
+## Video: H.264 or JPEG
+
+The firmware supports both, and the viewer's offer decides which one a session uses.
+
+| | H.264 track | JPEG over the DataChannel |
+| --- | --- | --- |
+| Targets | ESP32-S3 (`CONFIG_CAMERA_H264`, on by default) | every target |
+| Resolution | 320x240 | up to SVGA |
+| Frame rate | about 10 fps | a few fps, higher at small sizes |
+| Playback | a normal video element | frames reassembled and drawn by the viewer |
+
+`esp_h264` encodes in software on the S3, which is what caps the resolution; Espressif measures about 11 fps at 320x240. Encoding runs on its own task on the second core, so it does not disturb ICE, DTLS or the audio track.
+
+The camera switches to YUV422 for an H.264 session and back to JPEG afterwards, so the sensor is re-initialised when a viewer connects and again when it leaves.
+
+A viewer asks for a video track only when `getCameraCapabilities` reports `webrtcVideo`, which `sinricpro_camera_enable_webrtc_video()` sets. In the portal and the app, the **Smooth video** toggle switches between the two and reconnects. Older app and portal versions never offer a video track and keep getting JPEG.
+
+The software encoder cannot produce a keyframe on demand, so a viewer's keyframe request (RTCP PLI) restarts the encoder, at most once every two seconds. A keyframe is sent every second anyway.
 
 ## Memory settings
 
@@ -77,6 +96,6 @@ Signaling is a single offer/answer exchange without trickle ICE, so the session 
 
 ## Limits
 
-- Portal and app only. Alexa and Google Home need a native H.264 video track.
+- Portal and app only. Alexa and Google Home streaming stays disabled for these cameras in the SinricPro cloud.
 - WebRTC signaling needs the cloud connection: local control's UDP transport cannot carry an offer.
-- Snapshot and motion upload are not implemented yet.
+- Motion upload is not implemented yet. Snapshots are: the example answers `getSnapshot`, and during an H.264 session it compresses the YUV422 frame with `frame2jpg()` before uploading. The server accepts at most 512 KB per image.

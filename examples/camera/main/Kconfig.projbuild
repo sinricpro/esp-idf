@@ -48,6 +48,17 @@ menu "SinricPro Camera Example"
         help
             Exposes a flash toggle to viewers when set.
 
+    config CAMERA_H264
+        bool "Stream H.264 video on a WebRTC video track"
+        depends on IDF_TARGET_ESP32S3
+        default y
+        help
+            Encodes H.264 in software (esp_h264) and sends it on a video track,
+            which plays in a normal video element instead of being reassembled
+            from DataChannel JPEG fragments. Roughly 320x240 at 10 fps is what
+            the S3 sustains. Viewers that ask for no video track, and all other
+            targets, keep the JPEG path.
+
     config CAMERA_MICROPHONE
         bool "Stream the onboard PDM microphone"
         depends on CAMERA_BOARD_XIAO_S3_SENSE

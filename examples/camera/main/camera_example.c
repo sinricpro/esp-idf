@@ -21,6 +21,7 @@
 #include "freertos/event_groups.h"
 #include "esp_camera.h"
 #include "esp_event.h"
+#include "img_converters.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_psram.h"
@@ -121,6 +122,9 @@ static void wifi_init_sta(void)
  * Camera and microphone
  * =========================================================================== */
 
+/* Kept so the session can re-initialise the camera in YUV422 for an H.264 video track. */
+static camera_config_t s_camera_config;
+
 static esp_err_t camera_init(void)
 {
     if (!esp_psram_is_initialized()) {
@@ -133,6 +137,7 @@ static esp_err_t camera_init(void)
     /* Frame buffers are sized for the init resolution, so initialise at the largest
      * size viewers may pick and start streaming smaller. */
     config.frame_size = FRAMESIZE_SVGA;
+    s_camera_config = config;
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
@@ -245,6 +250,36 @@ static bool on_webrtc_offer(const char *device_id, const char *offer_sdp,
     return true;
 }
 
+/* Asked for by the app, the portal, and Alexa's SmartVision snapshot provider. */
+static bool on_snapshot(const char *device_id, void *user_data)
+{
+    camera_fb_t *frame = esp_camera_fb_get();
+    if (frame == NULL) {
+        ESP_LOGE(TAG, "Snapshot capture failed");
+        return false;
+    }
+
+    esp_err_t err;
+    if (frame->format == PIXFORMAT_JPEG) {
+        err = sinricpro_camera_send_snapshot(s_camera, frame->buf, frame->len);
+    } else {
+        /* An H.264 session leaves the sensor in YUV422, so the frame has to be compressed before
+         * it can be uploaded. */
+        uint8_t *jpeg = NULL;
+        size_t jpeg_len = 0;
+        if (frame2jpg(frame, 80, &jpeg, &jpeg_len)) {
+            err = sinricpro_camera_send_snapshot(s_camera, jpeg, jpeg_len);
+            free(jpeg);
+        } else {
+            ESP_LOGE(TAG, "Could not convert the frame to JPEG");
+            err = ESP_FAIL;
+        }
+    }
+
+    esp_camera_fb_return(frame);
+    return err == ESP_OK;
+}
+
 static bool on_power_state(const char *device_id, bool *state, void *user_data)
 {
     ESP_LOGI(TAG, "PowerState: %s", *state ? "ON" : "OFF");
@@ -311,6 +346,14 @@ void app_main(void)
     webrtc_camera_config_t session_config = WEBRTC_CAMERA_CONFIG_DEFAULT();
     session_config.max_frame_size = FRAMESIZE_SVGA;  /* the size camera_init() allocated for */
     session_config.flash_gpio = CONFIG_CAMERA_FLASH_GPIO;
+    session_config.camera_config = s_camera_config;
+#ifdef CONFIG_CAMERA_H264
+    session_config.h264_enabled = true;
+    /* Starts at 320x240, which the software encoder sustains at about 10 fps. Viewers can switch
+     * to 640x480 through the resolution control, at roughly 1 fps. */
+    session_config.h264_width = 320;
+    session_config.h264_height = 240;
+#endif
 #if CONFIG_IDF_TARGET_ESP32
     /* Once Wi-Fi and the SinricPro TLS socket are up, classic ESP32 has little contiguous
      * internal RAM left. Caches large enough to consume it leave the Wi-Fi driver unable to
@@ -351,9 +394,14 @@ void app_main(void)
     }
     sinricpro_camera_on_power_state(s_camera, on_power_state, NULL);
     sinricpro_camera_on_webrtc_offer(s_camera, on_webrtc_offer, NULL);
+    sinricpro_camera_on_snapshot(s_camera, on_snapshot, NULL);
 #ifdef CONFIG_CAMERA_MICROPHONE
     /* Viewers request an audio track only when this is set. */
     sinricpro_camera_enable_webrtc_audio(s_camera, true);
+#endif
+#ifdef CONFIG_CAMERA_H264
+    /* Likewise for video: without this viewers never offer a video track and get JPEG. */
+    sinricpro_camera_enable_webrtc_video(s_camera, true);
 #endif
 
     ret = sinricpro_start();

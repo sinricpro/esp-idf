@@ -127,6 +127,23 @@ esp_err_t sinricpro_camera_on_webrtc_offer(sinricpro_device_handle_t device,
 /* Reported as webrtcAudio, so viewers request an audio track. */
 esp_err_t sinricpro_camera_enable_webrtc_audio(sinricpro_device_handle_t device, bool enabled);
 
+/* Reported as webrtcVideo with webrtcVideoCodecs ["H264"], so viewers request a video
+   track. Without it they fall back to JPEG frames over the DataChannel. */
+esp_err_t sinricpro_camera_enable_webrtc_video(sinricpro_device_handle_t device, bool enabled);
+
+/* Registering the callback makes the device answer getSnapshot. Capture a frame in the
+   callback and upload it with sinricpro_camera_send_snapshot(). */
+typedef bool (*sinricpro_camera_snapshot_callback_t)(const char *device_id, void *user_data);
+
+esp_err_t sinricpro_camera_on_snapshot(sinricpro_device_handle_t device,
+                                       sinricpro_camera_snapshot_callback_t callback,
+                                       void *user_data);
+
+/* Posts the JPEG over HTTPS, signed with the device credentials. Blocks for the upload
+   and needs an active connection for the server timestamp. Maximum 512 KB. */
+esp_err_t sinricpro_camera_send_snapshot(sinricpro_device_handle_t device,
+                                         const uint8_t *jpeg, size_t length);
+
 esp_err_t sinricpro_camera_send_power_state_event(sinricpro_device_handle_t device,
                                                   bool state, const char *cause);
 ```
