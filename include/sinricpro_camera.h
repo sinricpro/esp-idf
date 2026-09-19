@@ -11,6 +11,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "sinricpro.h"
 #include "sinricpro_types.h"
 
@@ -30,6 +31,26 @@ extern "C" {
 typedef bool (*sinricpro_camera_power_state_callback_t)(
     const char *device_id,
     bool *state,
+    void *user_data
+);
+
+/**
+ * @brief Snapshot callback function signature
+ *
+ * Invoked when the SinricPro app or portal, or Alexa's SmartVision snapshot
+ * provider, asks for a still image. Capture a frame and upload it with
+ * sinricpro_camera_send_snapshot().
+ *
+ * @param[in] device_id  Device ID string
+ * @param[in] user_data  User data pointer passed during registration
+ *
+ * @return true if a snapshot was captured and uploaded
+ *
+ * @note Runs on the SinricPro task and blocks it for the length of the upload,
+ *       which is a TLS connection plus the image.
+ */
+typedef bool (*sinricpro_camera_snapshot_callback_t)(
+    const char *device_id,
     void *user_data
 );
 
@@ -109,6 +130,41 @@ esp_err_t sinricpro_camera_on_webrtc_offer(
 );
 
 /**
+ * @brief Register the snapshot callback
+ *
+ * Registering it is what makes the device answer the getSnapshot action.
+ *
+ * @return ESP_OK, or ESP_ERR_INVALID_ARG for a NULL device or callback
+ */
+esp_err_t sinricpro_camera_on_snapshot(
+    sinricpro_device_handle_t device,
+    sinricpro_camera_snapshot_callback_t callback,
+    void *user_data
+);
+
+/**
+ * @brief Upload a JPEG snapshot to SinricPro
+ *
+ * Posts the image to the SinricPro camera endpoint over HTTPS, signed with the
+ * device's credentials. Call it from the snapshot callback, or at any time to
+ * push an image (for example on motion).
+ *
+ * @param[in] device  Camera device handle
+ * @param[in] jpeg    JPEG image bytes
+ * @param[in] length  Number of bytes
+ *
+ * @return ESP_OK when the server accepted the image, otherwise an error
+ *
+ * @note Blocks for the length of the upload. Requires an active connection, for
+ *       the synchronised timestamp the signature is built from.
+ */
+esp_err_t sinricpro_camera_send_snapshot(
+    sinricpro_device_handle_t device,
+    const uint8_t *jpeg,
+    size_t length
+);
+
+/**
  * @brief Declare that WebRTC sessions carry a microphone audio track
  *
  * Reported through getCameraCapabilities; viewers request an audio track in
@@ -117,6 +173,17 @@ esp_err_t sinricpro_camera_on_webrtc_offer(
  * @return ESP_OK, or ESP_ERR_INVALID_ARG for a NULL device
  */
 esp_err_t sinricpro_camera_enable_webrtc_audio(sinricpro_device_handle_t device, bool enabled);
+
+/**
+ * @brief Declare that WebRTC sessions can carry an H.264 video track
+ *
+ * Reported through getCameraCapabilities as "webrtcVideo" with "webrtcVideoCodecs".
+ * Viewers add a receive-only video track to their offer only when it is set, and
+ * fall back to JPEG over the DataChannel otherwise.
+ *
+ * @return ESP_OK, or ESP_ERR_INVALID_ARG for a NULL device
+ */
+esp_err_t sinricpro_camera_enable_webrtc_video(sinricpro_device_handle_t device, bool enabled);
 
 /**
  * @brief Send PowerState event to server

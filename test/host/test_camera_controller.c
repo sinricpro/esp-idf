@@ -2,10 +2,13 @@
  * Copyright (c) 2019-2025 Sinric. All rights reserved.
  * Licensed under Creative Commons Attribution-Share Alike (CC BY-SA)
  *
- * Host tests for the camera WebRTC signaling contract shared with the portal,
- * the app and the Arduino SDK: the offer arrives base64-encoded, ICE servers
- * arrive as RTCIceServer entries whose "urls" is a string or an array, and the
- * answer goes back base64-encoded.
+ * Host tests for the camera signaling contract shared with the portal, the app
+ * and the Arduino SDK: the offer arrives base64-encoded, ICE servers arrive as
+ * RTCIceServer entries whose "urls" is a string or an array, the answer goes
+ * back base64-encoded, and getSnapshot reaches the application callback.
+ *
+ * The upload itself lives in camera_snapshot.c, which is left out of this build
+ * so the controller stays free of network dependencies.
  *
  * Build and run: test/host/run.sh
  */
@@ -64,6 +67,20 @@ static bool offer_callback(const char *device_id, const char *offer_sdp,
     return seen.result;
 }
 
+/* What the snapshot callback received, and what it should return. */
+static struct {
+    int calls;
+    char device_id[32];
+    bool result;
+} snapshot_seen;
+
+static bool snapshot_callback(const char *device_id, void *user_data)
+{
+    snapshot_seen.calls++;
+    snprintf(snapshot_seen.device_id, sizeof(snapshot_seen.device_id), "%s", device_id);
+    return snapshot_seen.result;
+}
+
 static char *encode(const char *text)
 {
     size_t length = 0;
@@ -110,6 +127,18 @@ static void test_capabilities(void)
     CHECK(cJSON_IsTrue(cJSON_GetObjectItem(response, "webrtc")) &&
           cJSON_IsTrue(cJSON_GetObjectItem(response, "webrtcAudio")),
           "a registered callback and audio are both reported");
+    CHECK(cJSON_IsFalse(cJSON_GetObjectItem(response, "webrtcVideo")) &&
+          cJSON_GetObjectItem(response, "webrtcVideoCodecs") == NULL,
+          "no video track is advertised until the firmware enables it");
+    cJSON_Delete(response);
+
+    sinricpro_camera_controller_set_webrtc_video(controller, true);
+    run(controller, "getCameraCapabilities", NULL, &response);
+    cJSON *codecs = cJSON_GetObjectItem(response, "webrtcVideoCodecs");
+    CHECK(cJSON_IsTrue(cJSON_GetObjectItem(response, "webrtcVideo")) &&
+          cJSON_IsArray(codecs) && cJSON_GetArraySize(codecs) == 1 &&
+          strcmp(cJSON_GetArrayItem(codecs, 0)->valuestring, "H264") == 0,
+          "an enabled video track is reported with its codec, so viewers offer one");
     cJSON_Delete(response);
 
     sinricpro_camera_controller_destroy(controller);
@@ -208,9 +237,38 @@ static void test_rejected_requests(void)
 
     CHECK(sinricpro_camera_controller_owns_action("getWebRTCAnswer") &&
           sinricpro_camera_controller_owns_action("getCameraCapabilities") &&
+          sinricpro_camera_controller_owns_action("getSnapshot") &&
           !sinricpro_camera_controller_owns_action("setPowerState") &&
           !sinricpro_camera_controller_owns_action(NULL),
           "action ownership");
+
+    sinricpro_camera_controller_destroy(controller);
+}
+
+static void test_snapshot(void)
+{
+    printf("getSnapshot\n");
+
+    sinricpro_camera_controller_handle_t controller = sinricpro_camera_controller_create();
+    cJSON *response = NULL;
+
+    memset(&snapshot_seen, 0, sizeof(snapshot_seen));
+    CHECK(!run(controller, "getSnapshot", NULL, &response) && snapshot_seen.calls == 0,
+          "firmware without a snapshot callback reports the request as unhandled");
+    cJSON_Delete(response);
+
+    sinricpro_camera_controller_set_snapshot_callback(controller, snapshot_callback, NULL);
+    snapshot_seen.result = true;
+
+    CHECK(run(controller, "getSnapshot", NULL, &response) && snapshot_seen.calls == 1 &&
+          strcmp(snapshot_seen.device_id, "5dc1564130xxxxxxxxxxxxxx") == 0,
+          "the callback receives the device id and its success is reported");
+    cJSON_Delete(response);
+
+    snapshot_seen.result = false;
+    CHECK(!run(controller, "getSnapshot", NULL, &response) && snapshot_seen.calls == 2,
+          "a callback that fails to capture is reported as a failed request");
+    cJSON_Delete(response);
 
     sinricpro_camera_controller_destroy(controller);
 }
@@ -220,6 +278,7 @@ int main(void)
     test_capabilities();
     test_offer_and_ice_servers();
     test_rejected_requests();
+    test_snapshot();
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;

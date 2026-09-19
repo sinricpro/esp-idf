@@ -71,6 +71,22 @@ static void set_level(camera_controls_t *controls, uint8_t level)
 
 static bool set_resolution(camera_controls_t *controls, const char *name)
 {
+    if (controls->h264_active) {
+        /* Recorded rather than applied: the encoder is built for one size, so the session has to
+         * stop it, re-initialise the camera and start it again. */
+        for (size_t i = 0; i < controls->h264_resolution_count; i++) {
+            if (strcmp(name, controls->h264_resolutions[i]) != 0) {
+                continue;
+            }
+            if (controls->h264_resolution != NULL && strcmp(name, controls->h264_resolution) == 0) {
+                return false;
+            }
+            controls->h264_resolution = controls->h264_resolutions[i];
+            controls->h264_resolution_changed = true;
+            return true;
+        }
+        return false;
+    }
     sensor_t *sensor = esp_camera_sensor_get();
     for (size_t i = 0; i < RESOLUTION_COUNT; i++) {
         if (strcmp(name, RESOLUTIONS[i].name) != 0 || RESOLUTIONS[i].size > controls->max_frame_size) {
@@ -166,6 +182,38 @@ void camera_controls_init(camera_controls_t *controls, framesize_t max_frame_siz
     }
 
     controls->fps = clamp_fps((int)(1000 / (frame_interval_ms > 0 ? frame_interval_ms : 1)));
+}
+
+void camera_controls_set_h264(camera_controls_t *controls, bool active,
+                              const char *const *resolutions, size_t resolution_count,
+                              const char *resolution, int fps)
+{
+    controls->h264_active = active;
+    controls->h264_resolutions = resolutions;
+    controls->h264_resolution_count = active ? resolution_count : 0;
+    controls->h264_resolution = resolution;
+    controls->h264_resolution_changed = false;
+    if (active) {
+        /* The JPEG quality ladder has nothing to act on while the encoder owns the bitrate. */
+        set_level(controls, 0);
+        controls->fps = clamp_fps(fps);
+    }
+    controls->state_changed = true;
+}
+
+void camera_controls_reapply(camera_controls_t *controls, bool include_frame_size)
+{
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor == NULL) {
+        return;
+    }
+    if (include_frame_size) {
+        sensor->set_framesize(sensor, controls->frame_size);
+    }
+    int quality = controls->base_quality + LEVELS[controls->level].quality_offset;
+    sensor->set_quality(sensor, quality > MAX_JPEG_QUALITY ? MAX_JPEG_QUALITY : quality);
+    sensor->set_vflip(sensor, controls->flip);
+    sensor->set_hmirror(sensor, controls->mirror);
 }
 
 bool camera_controls_apply(camera_controls_t *controls, const char *message, size_t length)
@@ -265,11 +313,18 @@ char *camera_controls_capabilities_json(const camera_controls_t *controls)
 
     cJSON_AddStringToObject(json, "type", "capabilities");
     cJSON *resolutions = cJSON_AddArrayToObject(json, "resolutions");
-    for (size_t i = 0; i < RESOLUTION_COUNT && resolutions != NULL; i++) {
-        if (RESOLUTIONS[i].size <= controls->max_frame_size) {
-            cJSON_AddItemToArray(resolutions, cJSON_CreateString(RESOLUTIONS[i].name));
+    if (controls->h264_active) {
+        for (size_t i = 0; i < controls->h264_resolution_count && resolutions != NULL; i++) {
+            cJSON_AddItemToArray(resolutions, cJSON_CreateString(controls->h264_resolutions[i]));
+        }
+    } else {
+        for (size_t i = 0; i < RESOLUTION_COUNT && resolutions != NULL; i++) {
+            if (RESOLUTIONS[i].size <= controls->max_frame_size) {
+                cJSON_AddItemToArray(resolutions, cJSON_CreateString(RESOLUTIONS[i].name));
+            }
         }
     }
+    cJSON_AddStringToObject(json, "videoCodec", controls->h264_active ? "h264" : "jpeg");
     cJSON_AddNumberToObject(json, "minFps", CAMERA_CONTROLS_MIN_FPS);
     cJSON_AddNumberToObject(json, "maxFps", CAMERA_CONTROLS_MAX_FPS);
     cJSON_AddBoolToObject(json, "flash", controls->flash_gpio >= 0);
@@ -290,7 +345,11 @@ char *camera_controls_state_json(const camera_controls_t *controls)
     double effective_fps = (double)(uint32_t)(10000.0 / (interval > 0 ? interval : 1) + 0.5) / 10.0;
 
     cJSON_AddStringToObject(json, "type", "state");
-    cJSON_AddStringToObject(json, "resolution", resolution_name(controls->frame_size));
+    cJSON_AddStringToObject(json, "videoCodec", controls->h264_active ? "h264" : "jpeg");
+    cJSON_AddStringToObject(json, "resolution",
+                            controls->h264_active && controls->h264_resolution != NULL
+                                ? controls->h264_resolution
+                                : resolution_name(controls->frame_size));
     cJSON_AddNumberToObject(json, "fps", controls->fps);
     cJSON_AddBoolToObject(json, "flash", controls->flash);
     cJSON_AddBoolToObject(json, "flip", controls->flip);
@@ -299,6 +358,15 @@ char *camera_controls_state_json(const camera_controls_t *controls)
     cJSON_AddNumberToObject(json, "qualityLevel", controls->level);
     cJSON_AddNumberToObject(json, "effectiveFps", effective_fps);
     return print_and_delete(json);
+}
+
+const char *camera_controls_take_h264_resolution(camera_controls_t *controls)
+{
+    if (!controls->h264_resolution_changed) {
+        return NULL;
+    }
+    controls->h264_resolution_changed = false;
+    return controls->h264_resolution;
 }
 
 bool camera_controls_take_state_changed(camera_controls_t *controls)

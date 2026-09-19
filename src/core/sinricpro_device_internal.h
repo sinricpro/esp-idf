@@ -84,6 +84,10 @@ esp_err_t sinricpro_core_send_event(const char *device_id,
                                      const char *cause,
                                      cJSON *value);
 
+/* App secret, for the camera snapshot upload: it signs its own HTTP headers rather than going
+   through the websocket envelope. NULL before sinricpro_init(). */
+const char *sinricpro_core_get_app_secret(void);
+
 #ifdef __cplusplus
 }
 #endif

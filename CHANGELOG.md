@@ -14,12 +14,30 @@
   microphone. The SinricPro component itself gains no dependencies. The example
   needs ESP-IDF 5.5 or later, because `esp_peer`'s prebuilt library links only
   against 5.5 and newer.
+- feat: H.264 video track on the ESP32-S3. `examples/camera` encodes captured YUV422 with
+  esp_h264 and sends it over RTP when the viewer's offer asks for a video track, so the
+  portal and app play it in a video element instead of reassembling JPEG fragments. A viewer
+  that offers no video track, and every other target, keeps the JPEG path unchanged.
+  `sinricpro_camera_enable_webrtc_video()` advertises it through `getCameraCapabilities` as
+  `webrtcVideo` with `webrtcVideoCodecs`.
+- feat: camera snapshots. `sinricpro_camera_on_snapshot()` answers the `getSnapshot`
+  action and `sinricpro_camera_send_snapshot()` uploads a JPEG over HTTPS, signed
+  with the device credentials, to the same endpoint the other SinricPro SDKs post
+  to. This is also what Alexa's SmartVision snapshot provider asks for. New Kconfig
+  `SINRICPRO_CAMERA_URL` (default `camera.sinric.pro`); images are capped at 512 KB
+  by the server.
 - feat: `sinricpro_set_response_message()`, so a callback can tell the client why
   a request failed.
-- feat: Kconfig `SINRICPRO_MAX_MESSAGE_SIZE` (default 16 KB).
+- feat: Kconfig `SINRICPRO_MAX_MESSAGE_SIZE` (default 32 KB). A viewer that asks
+  for a video track offers every codec its browser supports, which arrives as
+  roughly 21 KB of base64, so the earlier 16 KB ceiling dropped those offers.
 
 ### Fixes
 
+- fix: `sinricpro_get_timestamp()` returned the value the server last sent, which
+  only changes when a message arrives. Anything the device sent of its own accord
+  minutes later signed with a stale timestamp, and the camera snapshot endpoint
+  rejects those. It now advances with elapsed time.
 - fix: a server message larger than the websocket client's 2 KB buffer is posted
   as several data events, and each piece was parsed as a complete message, so the
   message was lost. The pieces are now reassembled.

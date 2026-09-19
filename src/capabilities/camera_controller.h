@@ -40,9 +40,25 @@ esp_err_t sinricpro_camera_controller_set_webrtc_offer_callback(
     void *user_data);
 
 /**
+ * @brief Set the snapshot callback
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t sinricpro_camera_controller_set_snapshot_callback(
+    sinricpro_camera_controller_handle_t handle,
+    sinricpro_camera_snapshot_callback_t callback,
+    void *user_data);
+
+/**
  * @brief Set whether WebRTC sessions carry a microphone audio track
  */
 void sinricpro_camera_controller_set_webrtc_audio(sinricpro_camera_controller_handle_t handle,
+                                                  bool enabled);
+
+/**
+ * @brief Set whether WebRTC sessions can carry an H.264 video track
+ */
+void sinricpro_camera_controller_set_webrtc_video(sinricpro_camera_controller_handle_t handle,
                                                   bool enabled);
 
 /**

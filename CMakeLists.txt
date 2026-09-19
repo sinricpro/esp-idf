@@ -8,6 +8,10 @@ set(SINRICPRO_REQUIRES
     esp_netif
     esp_wifi
     cjson
+    # Camera snapshots are posted over HTTPS rather than through the websocket.
+    esp_http_client
+    # Advances the server timestamp between messages; see sinricpro_get_timestamp().
+    esp_timer
 )
 
 if(CONFIG_SINRICPRO_ENABLE_LOCAL_CONTROL AND NOT CONFIG_SINRICPRO_LOCAL_CONTROL_NO_MDNS)
@@ -42,6 +46,7 @@ idf_component_register(
         "src/devices/sinricpro_speaker.c"
         "src/devices/sinricpro_camera.c"
         "src/capabilities/camera_controller.c"
+        "src/capabilities/camera_snapshot.c"
         "src/capabilities/power_state_controller.c"
         "src/capabilities/setting_controller.c"
         "src/capabilities/push_notification.c"

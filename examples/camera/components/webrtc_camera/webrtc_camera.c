@@ -27,6 +27,14 @@
 #include "jpeg_streamer.h"
 #include "webrtc_camera_priv.h"
 
+/* esp_h264 supports the S3 only; elsewhere the DataChannel JPEG path is the whole story. */
+#if CONFIG_IDF_TARGET_ESP32S3
+#define WEBRTC_CAMERA_H264 1
+#include "h264_streamer.h"
+#else
+#define WEBRTC_CAMERA_H264 0
+#endif
+
 static const char *TAG = "webrtc_camera";
 
 #define MAX_SIGNAL_BYTES     (16 * 1024)
@@ -48,6 +56,23 @@ typedef struct {
     char *username;
     char *credential;
 } ice_server_t;
+
+#if WEBRTC_CAMERA_H264
+/* Sizes the software encoder can be built for. Measured on an ESP32-S3: about 10 fps at QVGA and
+ * 1 fps at VGA, because openh264's working set no longer fits internal RAM at the larger size.
+ * VGA is offered because Alexa and Google Home refuse anything below 480p. */
+typedef struct {
+    const char *name;
+    uint16_t width;
+    uint16_t height;
+    framesize_t frame_size;
+    uint32_t bitrate;
+    /* What the encoder actually achieves, not what one might wish for. Rate control divides the
+     * bitrate by this, so an optimistic figure makes it compress far harder than the link needs
+     * and the picture suffers for frames that never arrive any sooner. */
+    uint8_t fps;
+} h264_mode_t;
+#endif
 
 typedef enum {
     COMMAND_START,
@@ -91,6 +116,14 @@ struct webrtc_camera {
     bool answer_published;
     bool close_requested;
     bool audio_active;
+    bool video_active;
+    /* The portal and the app carry their controls on a DataChannel; Alexa and Google Home offer
+     * media only. Its absence is what marks a smart-display viewer. */
+    bool data_channel_offered;
+#if WEBRTC_CAMERA_H264
+    h264_streamer_t *h264;
+    const h264_mode_t *h264_mode;
+#endif
     bool capabilities_pending;
     bool state_pending;
     uint16_t channel_id;
@@ -256,9 +289,109 @@ static void publish_answer(struct webrtc_camera *session, bool ok, const char *e
     xSemaphoreGive(session->answer_ready);
 }
 
+#if WEBRTC_CAMERA_H264
+/* A viewer that can render a video track offers H.264. Older viewers offer no video at all and
+ * keep the JPEG path, which is what makes this backward compatible. */
+static bool offer_wants_h264(const char *offer)
+{
+    return strstr(offer, "m=video") != NULL && strstr(offer, "H264") != NULL;
+}
+
+static const h264_mode_t H264_MODES[] = {
+    {"QVGA", 320, 240, FRAMESIZE_QVGA, 400000, 5},
+    {"VGA", 640, 480, FRAMESIZE_VGA, 800000, 2},
+};
+#define H264_MODE_COUNT (sizeof(H264_MODES) / sizeof(H264_MODES[0]))
+
+static const char *const H264_MODE_NAMES[] = {"QVGA", "VGA"};
+
+static const h264_mode_t *h264_mode_for_width(uint16_t width)
+{
+    for (size_t i = 0; i < H264_MODE_COUNT; i++) {
+        if (H264_MODES[i].width >= width) {
+            return &H264_MODES[i];
+        }
+    }
+    return &H264_MODES[H264_MODE_COUNT - 1];
+}
+
+static const h264_mode_t *h264_mode_by_name(const char *name)
+{
+    for (size_t i = 0; i < H264_MODE_COUNT; i++) {
+        if (strcmp(name, H264_MODES[i].name) == 0) {
+            return &H264_MODES[i];
+        }
+    }
+    return NULL;
+}
+
+/* The encoder reads YUV422 and the JPEG path needs JPEG, so the camera is re-initialised for the
+ * session and restored afterwards. Re-initialising resets the sensor, hence the reapply. */
+static esp_err_t select_camera_format(struct webrtc_camera *session, bool yuv)
+{
+    camera_config_t config = session->config.camera_config;
+    if (config.xclk_freq_hz == 0) {
+        ESP_LOGE(TAG, "camera_config is required for the H.264 video track");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (yuv) {
+        config.pixel_format = PIXFORMAT_YUV422;
+        config.frame_size = session->h264_mode->frame_size;
+        config.fb_count = 2;
+        config.grab_mode = CAMERA_GRAB_LATEST;
+    }
+
+    esp_err_t err = esp_camera_reconfigure(&config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Camera reconfigure failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    camera_controls_reapply(&session->controls, !yuv);
+    /* Each size carries its own achievable frame rate, so a resolution change adopts the new
+     * one rather than keeping a figure chosen for a different size. */
+    int fps = yuv ? session->h264_mode->fps : session->config.h264_fps;
+    camera_controls_set_h264(&session->controls, yuv, H264_MODE_NAMES, H264_MODE_COUNT,
+                             yuv ? session->h264_mode->name : NULL, fps);
+    return ESP_OK;
+}
+
+static void start_h264_streamer(struct webrtc_camera *session)
+{
+    h264_streamer_config_t config = {
+        .width = session->h264_mode->width,
+        .height = session->h264_mode->height,
+        .fps = (uint8_t)session->controls.fps,
+        .bitrate = session->h264_mode->bitrate,
+        .task_stack_size = 12 * 1024,
+        .task_priority = session->config.task_priority,
+    };
+    if (h264_streamer_start(&config, &session->h264) != ESP_OK) {
+        ESP_LOGE(TAG, "H.264 encoder failed to start");
+        session->close_requested = true;
+    }
+}
+
+static void stop_h264_streamer(struct webrtc_camera *session)
+{
+    if (session->h264 != NULL) {
+        h264_streamer_stop(session->h264);
+        session->h264 = NULL;
+    }
+    if (session->video_active) {
+        session->video_active = false;
+        select_camera_format(session, false);
+    }
+}
+#endif
+
 static void close_peer(struct webrtc_camera *session)
 {
     jpeg_streamer_reset(&session->streamer);
+#if WEBRTC_CAMERA_H264
+    /* Before the peer closes: the encoder task holds camera buffers while it runs. */
+    stop_h264_streamer(session);
+#endif
     camera_controls_viewer_left(&session->controls);
     atomic_store(&session->channel_open, false);
     session->close_requested = false;
@@ -326,6 +459,14 @@ static int on_state(esp_peer_state_t state, void *ctx)
     if (state == ESP_PEER_STATE_DISCONNECTED || state == ESP_PEER_STATE_CONNECT_FAILED) {
         session->close_requested = true;
     }
+#if WEBRTC_CAMERA_H264
+    /* Encoding starts only once there is somewhere to send frames. */
+    if (state == ESP_PEER_STATE_CONNECTED && session->video_active && session->h264 == NULL) {
+        start_h264_streamer(session);
+    } else if (state == ESP_PEER_STATE_VIDEO_PLI_RECEIVED) {
+        h264_streamer_request_keyframe(session->h264);
+    }
+#endif
     return ESP_PEER_ERR_NONE;
 }
 
@@ -398,6 +539,8 @@ static void start_peer(struct webrtc_camera *session, command_t *command)
         .on_data = on_data,
     };
 
+    session->data_channel_offered = strstr(command->offer, "webrtc-datachannel") != NULL;
+
     /* Viewers offer audio only when getCameraCapabilities reported it; older viewers never do. */
     session->audio_active = session->config.audio_source != NULL && strstr(command->offer, "m=audio") != NULL;
     if (session->audio_active) {
@@ -405,15 +548,48 @@ static void start_peer(struct webrtc_camera *session, command_t *command)
         cfg.audio_dir = ESP_PEER_MEDIA_DIR_SEND_ONLY;
     }
 
+#if WEBRTC_CAMERA_H264
+    session->h264_mode = h264_mode_for_width(session->config.h264_width);
+    /* Alexa and Google Home accept nothing below 480p, and have no DataChannel to ask for a
+     * different size with, so the larger mode is chosen for them up front. */
+    if (!session->data_channel_offered) {
+        const h264_mode_t *mode = h264_mode_by_name("VGA");
+        if (mode != NULL) {
+            session->h264_mode = mode;
+        }
+    }
+    session->video_active = session->config.h264_enabled && offer_wants_h264(command->offer) &&
+                            select_camera_format(session, true) == ESP_OK;
+    if (session->video_active) {
+        cfg.video_info = (esp_peer_video_stream_info_t){
+            .codec = ESP_PEER_VIDEO_CODEC_H264,
+            .width = session->config.h264_width,
+            .height = session->config.h264_height,
+            .fps = session->controls.fps,
+        };
+        cfg.video_dir = ESP_PEER_MEDIA_DIR_SEND_ONLY;
+    }
+#endif
+
     memset(&session->peer_defaults, 0, sizeof(session->peer_defaults));
-    session->peer_defaults.agent_recv_timeout = 10;
+    /* Milliseconds the ICE agent waits for a reply. A LAN round trip is a couple of ms, but a
+     * smart display answers from a distant region: at 10 ms the DTLS ClientHello timed out long
+     * before the reply arrived, and the handshake retried forever. Espressif's own examples all
+     * use 500. */
+    session->peer_defaults.agent_recv_timeout = 500;
     session->peer_defaults.data_ch_cfg.send_cache_size = session->config.data_channel_send_cache;
     session->peer_defaults.data_ch_cfg.recv_cache_size = session->config.data_channel_recv_cache;
-    /* RTP carries only the optional PCMU track, so a DataChannel-only session would otherwise
-     * strand memory the Wi-Fi driver needs. Zero is not an option: esp_peer reads it as its
-     * 400 kB default. */
-    session->peer_defaults.rtp_cfg.send_pool_size = session->audio_active ? 48 * 1024 : 4 * 1024;
-    session->peer_defaults.rtp_cfg.send_queue_num = session->audio_active ? 64 : 8;
+    /* RTP carries the optional PCMU track and, on the S3, the H.264 track, so a DataChannel-only
+     * session would otherwise strand memory the Wi-Fi driver needs. An encoded frame becomes some
+     * 40 RTP packets, which is what the video pool is sized for. Zero is not an option: esp_peer
+     * reads it as its 400 kB default. */
+    if (session->video_active) {
+        session->peer_defaults.rtp_cfg.send_pool_size = 64 * 1024;
+        session->peer_defaults.rtp_cfg.send_queue_num = 64;
+    } else {
+        session->peer_defaults.rtp_cfg.send_pool_size = session->audio_active ? 48 * 1024 : 4 * 1024;
+        session->peer_defaults.rtp_cfg.send_queue_num = session->audio_active ? 64 : 8;
+    }
     cfg.extra_cfg = &session->peer_defaults;
     cfg.extra_size = sizeof(session->peer_defaults);
 
@@ -468,6 +644,34 @@ static void stream_to_viewer(struct webrtc_camera *session)
     if (!session->capabilities_pending && session->state_pending &&
         send_text(session, camera_controls_state_json(&session->controls))) {
         session->state_pending = false;
+    }
+
+    if (session->video_active) {
+#if WEBRTC_CAMERA_H264
+        /* The track carries the video; the DataChannel is left to the control protocol. */
+        h264_streamer_set_fps(session->h264, (uint8_t)session->controls.fps);
+
+        /* The encoder is built for one size, so a viewer changing resolution means stopping it,
+         * re-initialising the camera and starting again. The track survives: the next IDR carries
+         * an SPS with the new dimensions, which viewers follow. */
+        const char *wanted = camera_controls_take_h264_resolution(&session->controls);
+        const h264_mode_t *mode = wanted != NULL ? h264_mode_by_name(wanted) : NULL;
+        if (mode != NULL && mode != session->h264_mode) {
+            ESP_LOGI(TAG, "Switching H.264 to %s", mode->name);
+            h264_streamer_stop(session->h264);
+            session->h264 = NULL;
+            session->h264_mode = mode;
+            if (select_camera_format(session, true) == ESP_OK) {
+                start_h264_streamer(session);
+            } else {
+                session->close_requested = true;
+            }
+        }
+#endif
+        if (camera_controls_take_state_changed(&session->controls)) {
+            session->state_pending = true;
+        }
+        return;
     }
 
     session->streamer.frame_interval_ms = camera_controls_frame_interval_ms(&session->controls);
@@ -528,6 +732,13 @@ static void session_task(void *arg)
         if (session->peer != NULL) {
             esp_peer_main_loop(session->peer);
 
+#if WEBRTC_CAMERA_H264
+            /* Independent of the DataChannel: video flows as soon as the peer is connected. */
+            if (session->h264 != NULL) {
+                h264_streamer_send(session->h264, session->peer);
+            }
+#endif
+
             uint32_t now = webrtc_camera_now_ms();
             if (!session->answer_published) {
                 if (session->local_sdp != NULL && now - session->last_signal_ms >= CANDIDATE_SETTLE_MS) {
@@ -542,7 +753,12 @@ static void session_task(void *arg)
             if (atomic_load(&session->channel_open)) {
                 stream_to_viewer(session);
             } else if (session->answer_published &&
+                       (session->data_channel_offered || !session->video_active) &&
                        now - session->session_started_ms > session->config.channel_open_timeout_ms) {
+                /* Only a viewer that asked for a DataChannel is expected to open one. Alexa and
+                 * Google Home never do, and dropping their session here cut the stream off
+                 * mid-play. A session with neither a channel nor a video track has nothing to
+                 * send, so that one still times out. */
                 session->close_requested = true;
             }
 
@@ -589,8 +805,12 @@ esp_err_t webrtc_camera_start(const webrtc_camera_config_t *config, webrtc_camer
 
     if (session->commands != NULL && session->answer_ready != NULL && session->answer_lock != NULL &&
         session->offer_lock != NULL &&
-        xTaskCreate(session_task, "webrtc_camera", config->task_stack_size, session, config->task_priority,
-                    &session->task) == pdPASS) {
+        /* Pinned to core 0, beside Wi-Fi and TLS, so that core 1 belongs to the H.264 encoder
+         * alone. Left unpinned it lands on core 1 too, and two busy tasks of equal priority
+         * there keep the idle task off the core entirely, which trips the task watchdog and
+         * slows the encoder by competing with it. */
+        xTaskCreatePinnedToCore(session_task, "webrtc_camera", config->task_stack_size, session,
+                                config->task_priority, &session->task, 0) == pdPASS) {
         *out_handle = session;
         return ESP_OK;
     }
