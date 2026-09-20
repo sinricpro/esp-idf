@@ -18,6 +18,7 @@
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,7 +36,10 @@ static struct {
     sinricpro_device_t *devices;  /* Linked list of devices */
     size_t device_count;
     sinricpro_message_queue_handle_t send_queue;
+    /* Server time, and the monotonic reading when it arrived. The device has no clock of its own,
+     * so the pair is what lets sinricpro_get_timestamp() advance between messages. */
     uint32_t timestamp;
+    int64_t timestamp_set_us;
     bool initialized;
     bool started;
     SemaphoreHandle_t mutex;
@@ -377,11 +381,17 @@ static void handle_invalid_signature(cJSON *json_message,
     cJSON_Delete(response);
 }
 
+static void set_server_timestamp(uint32_t timestamp)
+{
+    core_state.timestamp = timestamp;
+    core_state.timestamp_set_us = esp_timer_get_time();
+}
+
 static void handle_timestamp(cJSON *json_message)
 {
     cJSON *timestamp_item = cJSON_GetObjectItem(json_message, "timestamp");
     if (timestamp_item && cJSON_IsNumber(timestamp_item)) {
-        core_state.timestamp = (uint32_t)timestamp_item->valuedouble;
+        set_server_timestamp((uint32_t)timestamp_item->valuedouble);
         ESP_LOGI(TAG, "Timestamp synchronized: %lu", core_state.timestamp);
     }
 }
@@ -441,7 +451,7 @@ static void process_incoming(const char *data, size_t length,
     if (payload) {
         cJSON *created_at = cJSON_GetObjectItem(payload, "createdAt");
         if (created_at && cJSON_IsNumber(created_at)) {
-            core_state.timestamp = (uint32_t)created_at->valuedouble;
+            set_server_timestamp((uint32_t)created_at->valuedouble);
         }
 
         cJSON *type_item = cJSON_GetObjectItem(payload, "type");
@@ -478,6 +488,11 @@ static void handle_udp_message(const char *data, size_t length,
 /* ========================================================================
  * Event Sending
  * ======================================================================== */
+
+const char *sinricpro_core_get_app_secret(void)
+{
+    return core_state.initialized ? core_state.config.app_secret : NULL;
+}
 
 esp_err_t sinricpro_core_send_event(const char *device_id,
                                      const char *action,
@@ -854,7 +869,14 @@ bool sinricpro_local_control_is_running(void)
 
 uint32_t sinricpro_get_timestamp(void)
 {
-    return core_state.timestamp;
+    if (core_state.timestamp == 0) {
+        return 0;
+    }
+    /* Advanced by the time since the server last told us, so a caller that sends something of its
+     * own accord - a snapshot on motion, say - does not sign with a timestamp the server rejects
+     * as stale. */
+    int64_t elapsed_us = esp_timer_get_time() - core_state.timestamp_set_us;
+    return core_state.timestamp + (uint32_t)(elapsed_us / 1000000);
 }
 
 esp_err_t sinricpro_set_response_message(const char *message)

@@ -20,6 +20,17 @@ menu "SinricPro Configuration"
         help
             WebSocket path on the server.
 
+    config SINRICPRO_CAMERA_URL
+        string "SinricPro camera upload host"
+        default "camera.sinric.pro"
+        help
+            Host that receives camera snapshots over HTTPS on port 443.
+            Only used by camera devices that register a snapshot callback.
+
+            Change it together with SINRICPRO_SERVER_URL: a device on the test
+            server uploads to "testcamera.sinric.pro". Uploading to the wrong
+            host fails the TLS handshake rather than reporting a mismatch.
+
     config SINRICPRO_WEBSOCKET_TASK_STACK_SIZE
         int "WebSocket task stack size"
         default 8192
@@ -71,13 +82,17 @@ menu "SinricPro Configuration"
 
     config SINRICPRO_MAX_MESSAGE_SIZE
         int "Maximum incoming message size (bytes)"
-        default 16384
+        default 32768
         range 2048 65536
         help
             Largest server message the SDK reassembles. The websocket client
             delivers frames in 2 KB pieces; a message above this limit is
             dropped whole rather than parsed in fragments. A camera WebRTC
-            offer carries SDP plus TURN credentials and needs several KB.
+            offer carries SDP plus TURN credentials. An offer that asks for a
+            video track lists every video codec the browser supports, which
+            measures about 21 KB once base64-encoded, so 16 KB is not enough.
+            The limit is a ceiling, not an allocation: each message is
+            buffered at its actual size.
 
     config SINRICPRO_AUTO_RECONNECT
         bool "Enable auto-reconnection"

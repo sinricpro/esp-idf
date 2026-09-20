@@ -16,6 +16,7 @@ static const char *TAG = "camera_ctrl";
 
 #define ACTION_GET_CAMERA_CAPABILITIES "getCameraCapabilities"
 #define ACTION_GET_WEBRTC_ANSWER       "getWebRTCAnswer"
+#define ACTION_GET_SNAPSHOT            "getSnapshot"
 
 /* The server sends one STUN URL and a few TURN URLs; this only bounds a malformed list. */
 #define MAX_ICE_SERVER_URLS 16
@@ -26,7 +27,10 @@ static const char *TAG = "camera_ctrl";
 struct sinricpro_camera_controller {
     sinricpro_camera_webrtc_offer_callback_t offer_callback;
     void *offer_user_data;
+    sinricpro_camera_snapshot_callback_t snapshot_callback;
+    void *snapshot_user_data;
     bool webrtc_audio;
+    bool webrtc_video;
 };
 
 sinricpro_camera_controller_handle_t sinricpro_camera_controller_create(void)
@@ -63,11 +67,34 @@ void sinricpro_camera_controller_set_webrtc_audio(sinricpro_camera_controller_ha
     }
 }
 
+void sinricpro_camera_controller_set_webrtc_video(sinricpro_camera_controller_handle_t handle,
+                                                  bool enabled)
+{
+    if (handle != NULL) {
+        handle->webrtc_video = enabled;
+    }
+}
+
+esp_err_t sinricpro_camera_controller_set_snapshot_callback(
+    sinricpro_camera_controller_handle_t handle,
+    sinricpro_camera_snapshot_callback_t callback,
+    void *user_data)
+{
+    if (handle == NULL || callback == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    handle->snapshot_callback = callback;
+    handle->snapshot_user_data = user_data;
+    return ESP_OK;
+}
+
 bool sinricpro_camera_controller_owns_action(const char *action)
 {
     return action != NULL &&
            (strcmp(action, ACTION_GET_CAMERA_CAPABILITIES) == 0 ||
-            strcmp(action, ACTION_GET_WEBRTC_ANSWER) == 0);
+            strcmp(action, ACTION_GET_WEBRTC_ANSWER) == 0 ||
+            strcmp(action, ACTION_GET_SNAPSHOT) == 0);
 }
 
 static char *base64_decode_string(const char *input)
@@ -217,11 +244,29 @@ bool sinricpro_camera_controller_handle_request(
         bool webrtc = handle->offer_callback != NULL;
         cJSON_AddBoolToObject(response_value, "webrtc", webrtc);
         cJSON_AddBoolToObject(response_value, "webrtcAudio", webrtc && handle->webrtc_audio);
+        /* A viewer asks for a video track only when the firmware reports one; without it the
+         * session streams JPEG over the DataChannel instead. */
+        bool video = webrtc && handle->webrtc_video;
+        cJSON_AddBoolToObject(response_value, "webrtcVideo", video);
+        if (video) {
+            cJSON *codecs = cJSON_AddArrayToObject(response_value, "webrtcVideoCodecs");
+            if (codecs != NULL) {
+                cJSON_AddItemToArray(codecs, cJSON_CreateString("H264"));
+            }
+        }
         return true;
     }
 
     if (strcmp(action, ACTION_GET_WEBRTC_ANSWER) == 0) {
         return handle_webrtc_offer(handle, device_id, request_value, response_value);
+    }
+
+    if (strcmp(action, ACTION_GET_SNAPSHOT) == 0) {
+        if (handle->snapshot_callback == NULL) {
+            ESP_LOGW(TAG, "No snapshot callback registered");
+            return false;
+        }
+        return handle->snapshot_callback(device_id, handle->snapshot_user_data);
     }
 
     return false;

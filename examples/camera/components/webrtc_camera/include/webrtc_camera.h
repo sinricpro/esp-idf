@@ -54,6 +54,18 @@ typedef struct {
     int flash_gpio;                    /**< Flash LED GPIO, -1 for none (AI-Thinker ESP32-CAM: 4) */
     webrtc_camera_audio_source_t audio_source;  /**< NULL = no microphone track */
     void *audio_ctx;
+
+    /** Send H.264 on a WebRTC video track when the viewer offers one. ESP32-S3 only, where
+     *  esp_h264 encodes in software. A viewer that offers no video track still gets JPEG over
+     *  the DataChannel, so older app and portal versions keep working. */
+    bool h264_enabled;
+    uint16_t h264_width;
+    uint16_t h264_height;
+    uint8_t h264_fps;
+    uint32_t h264_bitrate;
+    /** The board's camera wiring, as passed to esp_camera_init(). Required when h264_enabled:
+     *  the session re-initialises the camera in YUV422 for a video track and back to JPEG after. */
+    camera_config_t camera_config;
 } webrtc_camera_config_t;
 
 #define WEBRTC_CAMERA_CONFIG_DEFAULT() {        \
@@ -70,6 +82,12 @@ typedef struct {
     .flash_gpio = -1,                           \
     .audio_source = NULL,                       \
     .audio_ctx = NULL,                          \
+    .h264_enabled = false,                      \
+    .h264_width = 320,                          \
+    .h264_height = 240,                         \
+    .h264_fps = 10,                             \
+    .h264_bitrate = 400000,                     \
+    .camera_config = {0},                       \
 }
 
 /**

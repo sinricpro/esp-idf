@@ -10,6 +10,7 @@
 #include "../core/sinricpro_device_internal.h"
 #include "../capabilities/power_state_controller.h"
 #include "../capabilities/camera_controller.h"
+#include "../capabilities/camera_snapshot.h"
 #include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
@@ -140,6 +141,32 @@ esp_err_t sinricpro_camera_on_webrtc_offer(sinricpro_device_handle_t handle,
                                                                   user_data);
 }
 
+esp_err_t sinricpro_camera_on_snapshot(sinricpro_device_handle_t handle,
+                                        sinricpro_camera_snapshot_callback_t callback,
+                                        void *user_data)
+{
+    if (handle == NULL || callback == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    sinricpro_camera_device_t *device = (sinricpro_camera_device_t *)handle;
+
+    return sinricpro_camera_controller_set_snapshot_callback(device->camera, callback, user_data);
+}
+
+esp_err_t sinricpro_camera_send_snapshot(sinricpro_device_handle_t handle,
+                                          const uint8_t *jpeg,
+                                          size_t length)
+{
+    if (handle == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    sinricpro_camera_device_t *device = (sinricpro_camera_device_t *)handle;
+
+    return sinricpro_camera_snapshot_upload(device->base.device_id, jpeg, length);
+}
+
 esp_err_t sinricpro_camera_enable_webrtc_audio(sinricpro_device_handle_t handle, bool enabled)
 {
     if (handle == NULL) {
@@ -148,6 +175,17 @@ esp_err_t sinricpro_camera_enable_webrtc_audio(sinricpro_device_handle_t handle,
 
     sinricpro_camera_device_t *device = (sinricpro_camera_device_t *)handle;
     sinricpro_camera_controller_set_webrtc_audio(device->camera, enabled);
+    return ESP_OK;
+}
+
+esp_err_t sinricpro_camera_enable_webrtc_video(sinricpro_device_handle_t handle, bool enabled)
+{
+    if (handle == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    sinricpro_camera_device_t *device = (sinricpro_camera_device_t *)handle;
+    sinricpro_camera_controller_set_webrtc_video(device->camera, enabled);
     return ESP_OK;
 }
 
