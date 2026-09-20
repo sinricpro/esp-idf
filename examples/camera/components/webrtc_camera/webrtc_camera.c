@@ -297,8 +297,11 @@ static bool offer_wants_h264(const char *offer)
     return strstr(offer, "m=video") != NULL && strstr(offer, "H264") != NULL;
 }
 
+/* QVGA measured about 2.8 fps on a XIAO ESP32S3 Sense, 204 frames in 73 s with none dropped. The
+ * rate is advertised in the SDP and a receiver paces its jitter buffer against it, so each size
+ * declares what it sustains rather than what it aims for. */
 static const h264_mode_t H264_MODES[] = {
-    {"QVGA", 320, 240, FRAMESIZE_QVGA, 400000, 5},
+    {"QVGA", 320, 240, FRAMESIZE_QVGA, 400000, 3},
     {"VGA", 640, 480, FRAMESIZE_VGA, 800000, 2},
 };
 #define H264_MODE_COUNT (sizeof(H264_MODES) / sizeof(H264_MODES[0]))
