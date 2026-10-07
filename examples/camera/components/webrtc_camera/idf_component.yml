@@ -1,15 +1,19 @@
-description: "SinricPro WebRTC live view for ESP32 cameras: H.264 video on the S3, JPEG over a DataChannel elsewhere"
+description: "SinricPro WebRTC live view for ESP32 cameras: H.264 video on the S3 and P4, JPEG over a DataChannel elsewhere"
 dependencies:
   # esp_peer's prebuilt library calls esp_log(), which ESP-IDF added in 5.5.
   idf:
     version: ">=5.5"
   espressif/esp_peer:
     version: "^1.5.5"
+  # The P4's MIPI camera is served by the local p4_camera component instead
   espressif/esp32-camera:
     version: "^2.1.7"
+    rules:
+      - if: "target != esp32p4"
   espressif/cjson:
     version: "*"
+  # Software encoder on the S3, hardware encoder on the P4
   espressif/esp_h264:
     version: "^1.4.1"
     rules:
-      - if: "target == esp32s3"
+      - if: "target in [esp32s3, esp32p4]"

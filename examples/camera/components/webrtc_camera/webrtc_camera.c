@@ -27,12 +27,23 @@
 #include "jpeg_streamer.h"
 #include "webrtc_camera_priv.h"
 
-/* esp_h264 supports the S3 only; elsewhere the DataChannel JPEG path is the whole story. */
-#if CONFIG_IDF_TARGET_ESP32S3
+/* esp_h264 encodes in software on the S3 and in hardware on the P4; elsewhere the DataChannel
+ * JPEG path is the whole story. */
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4
 #define WEBRTC_CAMERA_H264 1
 #include "h264_streamer.h"
 #else
 #define WEBRTC_CAMERA_H264 0
+#endif
+
+/* esp_peer_main_loop() blocks up to agent_recv_timeout (500 ms) waiting for a packet, which held
+ * the P4's 15 fps H.264 to 3 fps when it shared the session task. A dedicated task costs another
+ * task stack of internal RAM, which classic ESP32 cannot spare once Wi-Fi and TLS are up, so the
+ * other targets keep running it on the session task. */
+#if CONFIG_IDF_TARGET_ESP32P4
+#define WEBRTC_CAMERA_PEER_LOOP_TASK 1
+#else
+#define WEBRTC_CAMERA_PEER_LOOP_TASK 0
 #endif
 
 static const char *TAG = "webrtc_camera";
@@ -87,11 +98,35 @@ typedef struct {
     size_t server_count;
 } command_t;
 
+/* esp_peer callbacks run inside esp_peer_main_loop(), on the peer loop task where there is one;
+ * they are copied into events so that all session state stays owned by the session task. */
+typedef enum {
+    EVENT_MSG,
+    EVENT_STATE,
+    EVENT_CHANNEL_OPEN,
+    EVENT_CHANNEL_CLOSE,
+    EVENT_DATA,
+} event_type_t;
+
+typedef struct {
+    event_type_t type;
+    int value;  /* message type, peer state, stream id or data frame type */
+    char *data; /* owned, NUL-terminated copy */
+    int size;
+} peer_event_t;
+
+#define EVENT_QUEUE_LEN 32
+
 struct webrtc_camera {
     webrtc_camera_config_t config;
     jpeg_streamer_t streamer;
     camera_controls_t controls;
     QueueHandle_t commands;
+    QueueHandle_t events;
+    /* The esp_peer_main_loop() task, when WEBRTC_CAMERA_PEER_LOOP_TASK is set. */
+    TaskHandle_t loop_task;
+    SemaphoreHandle_t loop_stopped;
+    atomic_bool loop_running;
     SemaphoreHandle_t answer_ready;
     SemaphoreHandle_t answer_lock;
     SemaphoreHandle_t offer_lock;
@@ -297,6 +332,19 @@ static bool offer_wants_h264(const char *offer)
     return strstr(offer, "m=video") != NULL && strstr(offer, "H264") != NULL;
 }
 
+#if CONFIG_IDF_TARGET_ESP32P4
+/* The P4 encodes in hardware at the sensor's native modes (p4_camera delivers 800x640 or
+ * 1280x960, never a scaled size), so each mode runs at the controls' frame-rate ceiling and the
+ * bitrate is what a 1-bit SDIO link to an ESP-Hosted co-processor carries with headroom. "VGA"
+ * keeps its name so the smart-display lookup below and existing viewers still find it. */
+static const h264_mode_t H264_MODES[] = {
+    {"VGA", 800, 640, FRAMESIZE_SVGA, 1200000, 15},
+    {"HD", 1280, 960, FRAMESIZE_SXGA, 2000000, 15},
+};
+static const char *const H264_MODE_NAMES[] = {"VGA", "HD"};
+/* Smart displays get the full field of view: the 800x640 sensor mode is a centre crop. */
+#define H264_SMART_DISPLAY_MODE "HD"
+#else
 /* QVGA measured about 2.8 fps on a XIAO ESP32S3 Sense, 204 frames in 73 s with none dropped. The
  * rate is advertised in the SDP and a receiver paces its jitter buffer against it, so each size
  * declares what it sustains rather than what it aims for. */
@@ -304,9 +352,10 @@ static const h264_mode_t H264_MODES[] = {
     {"QVGA", 320, 240, FRAMESIZE_QVGA, 400000, 3},
     {"VGA", 640, 480, FRAMESIZE_VGA, 800000, 2},
 };
-#define H264_MODE_COUNT (sizeof(H264_MODES) / sizeof(H264_MODES[0]))
-
 static const char *const H264_MODE_NAMES[] = {"QVGA", "VGA"};
+#define H264_SMART_DISPLAY_MODE "VGA"
+#endif
+#define H264_MODE_COUNT (sizeof(H264_MODES) / sizeof(H264_MODES[0]))
 
 static const h264_mode_t *h264_mode_for_width(uint16_t width)
 {
@@ -339,7 +388,13 @@ static esp_err_t select_camera_format(struct webrtc_camera *session, bool yuv)
     }
 
     if (yuv) {
+#if CONFIG_IDF_TARGET_ESP32P4
+        /* The ISP's packed YUV420 decodes green and colourless on rev < 3 silicon, so the
+         * streamer converts BGR to the encoder's layout itself */
+        config.pixel_format = PIXFORMAT_RGB888;
+#else
         config.pixel_format = PIXFORMAT_YUV422;
+#endif
         config.frame_size = session->h264_mode->frame_size;
         config.fb_count = 2;
         config.grab_mode = CAMERA_GRAB_LATEST;
@@ -388,6 +443,9 @@ static void stop_h264_streamer(struct webrtc_camera *session)
 }
 #endif
 
+static void stop_peer_loop(struct webrtc_camera *session);
+static void drain_events(struct webrtc_camera *session, bool dispatch);
+
 static void close_peer(struct webrtc_camera *session)
 {
     jpeg_streamer_reset(&session->streamer);
@@ -402,6 +460,8 @@ static void close_peer(struct webrtc_camera *session)
     session->capabilities_pending = false;
     session->state_pending = false;
 
+    stop_peer_loop(session);
+    drain_events(session, false);
     if (session->peer != NULL) {
         esp_peer_close(session->peer);
         session->peer = NULL;
@@ -416,13 +476,8 @@ static void close_peer(struct webrtc_camera *session)
     }
 }
 
-static int on_msg(esp_peer_msg_t *msg, void *ctx)
+static void handle_msg(struct webrtc_camera *session, const esp_peer_msg_t *msg)
 {
-    struct webrtc_camera *session = ctx;
-    if (msg == NULL || msg->data == NULL || msg->size <= 0 || msg->size > MAX_SIGNAL_BYTES) {
-        return ESP_PEER_ERR_INVALID_ARG;
-    }
-
     if (msg->type == ESP_PEER_MSG_TYPE_SDP) {
         char *sdp = strndup((const char *)msg->data, (size_t)msg->size);
         if (sdp != NULL) {
@@ -452,12 +507,10 @@ static int on_msg(esp_peer_msg_t *msg, void *ctx)
     }
 
     session->last_signal_ms = webrtc_camera_now_ms();
-    return ESP_PEER_ERR_NONE;
 }
 
-static int on_state(esp_peer_state_t state, void *ctx)
+static void handle_state(struct webrtc_camera *session, esp_peer_state_t state)
 {
-    struct webrtc_camera *session = ctx;
     ESP_LOGI(TAG, "Peer state: %d", (int)state);
     if (state == ESP_PEER_STATE_DISCONNECTED || state == ESP_PEER_STATE_CONNECT_FAILED) {
         session->close_requested = true;
@@ -470,38 +523,143 @@ static int on_state(esp_peer_state_t state, void *ctx)
         h264_streamer_request_keyframe(session->h264);
     }
 #endif
+}
+
+static void dispatch_event(struct webrtc_camera *session, const peer_event_t *event)
+{
+    switch (event->type) {
+    case EVENT_MSG: {
+        esp_peer_msg_t msg = {.type = event->value, .data = (uint8_t *)event->data, .size = event->size};
+        handle_msg(session, &msg);
+        break;
+    }
+    case EVENT_STATE:
+        handle_state(session, (esp_peer_state_t)event->value);
+        break;
+    case EVENT_CHANNEL_OPEN:
+        session->channel_id = (uint16_t)event->value;
+        session->capabilities_pending = true;
+        session->state_pending = true;
+        atomic_store(&session->channel_open, true);
+        break;
+    case EVENT_CHANNEL_CLOSE:
+        atomic_store(&session->channel_open, false);
+        session->close_requested = true;
+        break;
+    case EVENT_DATA:
+        camera_controls_apply(&session->controls, event->data, (size_t)event->size);
+        session->state_pending = true;
+        break;
+    }
+}
+
+/* A closing session passes dispatch = false to discard what the old peer left queued. */
+static void drain_events(struct webrtc_camera *session, bool dispatch)
+{
+    peer_event_t event;
+    while (xQueueReceive(session->events, &event, 0) == pdTRUE) {
+        if (dispatch) {
+            dispatch_event(session, &event);
+        }
+        free(event.data);
+    }
+}
+
+static void post_event(struct webrtc_camera *session, event_type_t type, int value, const void *data, int size)
+{
+    peer_event_t event = {.type = type, .value = value};
+    if (data != NULL && size > 0) {
+        event.data = malloc((size_t)size + 1);
+        if (event.data == NULL) {
+            ESP_LOGW(TAG, "Out of memory for a peer event");
+            return;
+        }
+        memcpy(event.data, data, (size_t)size);
+        event.data[size] = '\0';
+        event.size = size;
+    }
+    /* Without a loop task the queue is drained by this same task, so waiting cannot help. */
+    TickType_t wait = WEBRTC_CAMERA_PEER_LOOP_TASK ? pdMS_TO_TICKS(100) : 0;
+    if (xQueueSend(session->events, &event, wait) != pdTRUE) {
+        ESP_LOGW(TAG, "Peer event %d dropped", (int)type);
+        free(event.data);
+    }
+}
+
+static int on_msg(esp_peer_msg_t *msg, void *ctx)
+{
+    if (msg == NULL || msg->data == NULL || msg->size <= 0 || msg->size > MAX_SIGNAL_BYTES) {
+        return ESP_PEER_ERR_INVALID_ARG;
+    }
+    post_event(ctx, EVENT_MSG, (int)msg->type, msg->data, msg->size);
+    return ESP_PEER_ERR_NONE;
+}
+
+static int on_state(esp_peer_state_t state, void *ctx)
+{
+    post_event(ctx, EVENT_STATE, (int)state, NULL, 0);
     return ESP_PEER_ERR_NONE;
 }
 
 static int on_channel_open(esp_peer_data_channel_info_t *channel, void *ctx)
 {
-    struct webrtc_camera *session = ctx;
-    session->channel_id = channel->stream_id;
-    session->capabilities_pending = true;
-    session->state_pending = true;
-    atomic_store(&session->channel_open, true);
+    post_event(ctx, EVENT_CHANNEL_OPEN, channel->stream_id, NULL, 0);
     return ESP_PEER_ERR_NONE;
 }
 
 static int on_channel_close(esp_peer_data_channel_info_t *channel, void *ctx)
 {
     (void)channel;
-    struct webrtc_camera *session = ctx;
-    atomic_store(&session->channel_open, false);
-    session->close_requested = true;
+    post_event(ctx, EVENT_CHANNEL_CLOSE, 0, NULL, 0);
     return ESP_PEER_ERR_NONE;
 }
 
 static int on_data(esp_peer_data_frame_t *frame, void *ctx)
 {
-    struct webrtc_camera *session = ctx;
     if (frame == NULL || frame->type != ESP_PEER_DATA_CHANNEL_STRING || frame->size <= 0 ||
         frame->size > MAX_CONTROL_BYTES) {
         return ESP_PEER_ERR_NONE;
     }
-    camera_controls_apply(&session->controls, (const char *)frame->data, (size_t)frame->size);
-    session->state_pending = true;
+    post_event(ctx, EVENT_DATA, (int)frame->type, frame->data, frame->size);
     return ESP_PEER_ERR_NONE;
+}
+
+static void peer_loop_task(void *arg)
+{
+    struct webrtc_camera *session = arg;
+    while (atomic_load(&session->loop_running)) {
+        esp_peer_main_loop(session->peer);
+        /* main_loop returns at once while packets keep arriving; the tick lets idle run */
+        vTaskDelay(1);
+    }
+    xSemaphoreGive(session->loop_stopped);
+    vTaskDelete(NULL);
+}
+
+static bool start_peer_loop(struct webrtc_camera *session)
+{
+    if (!WEBRTC_CAMERA_PEER_LOOP_TASK) {
+        return true;
+    }
+    atomic_store(&session->loop_running, true);
+    if (xTaskCreatePinnedToCore(peer_loop_task, "webrtc_peer", session->config.task_stack_size, session,
+                                session->config.task_priority, &session->loop_task, 0) != pdPASS) {
+        atomic_store(&session->loop_running, false);
+        session->loop_task = NULL;
+        return false;
+    }
+    return true;
+}
+
+/* Waits out one blocked main_loop call, at most agent_recv_timeout. */
+static void stop_peer_loop(struct webrtc_camera *session)
+{
+    if (session->loop_task == NULL) {
+        return;
+    }
+    atomic_store(&session->loop_running, false);
+    xSemaphoreTake(session->loop_stopped, portMAX_DELAY);
+    session->loop_task = NULL;
 }
 
 static void start_peer(struct webrtc_camera *session, command_t *command)
@@ -556,7 +714,7 @@ static void start_peer(struct webrtc_camera *session, command_t *command)
     /* Alexa and Google Home accept nothing below 480p, and have no DataChannel to ask for a
      * different size with, so the larger mode is chosen for them up front. */
     if (!session->data_channel_offered) {
-        const h264_mode_t *mode = h264_mode_by_name("VGA");
+        const h264_mode_t *mode = h264_mode_by_name(H264_SMART_DISPLAY_MODE);
         if (mode != NULL) {
             session->h264_mode = mode;
         }
@@ -566,8 +724,8 @@ static void start_peer(struct webrtc_camera *session, command_t *command)
     if (session->video_active) {
         cfg.video_info = (esp_peer_video_stream_info_t){
             .codec = ESP_PEER_VIDEO_CODEC_H264,
-            .width = session->config.h264_width,
-            .height = session->config.h264_height,
+            .width = session->h264_mode->width,
+            .height = session->h264_mode->height,
             .fps = session->controls.fps,
         };
         cfg.video_dir = ESP_PEER_MEDIA_DIR_SEND_ONLY;
@@ -596,8 +754,8 @@ static void start_peer(struct webrtc_camera *session, command_t *command)
     cfg.extra_cfg = &session->peer_defaults;
     cfg.extra_size = sizeof(session->peer_defaults);
 
-    /* Callbacks fire only inside esp_peer_main_loop(), so the first SDP reported after the offer
-     * is this session's answer. */
+    /* Callbacks fire only inside esp_peer_main_loop(), and the loop starts after the offer is
+     * handed over, so the first SDP reported is this session's answer. */
     int ret = esp_peer_open(&cfg, esp_peer_get_default_impl(), &session->peer);
     if (ret == ESP_PEER_ERR_NONE) {
         ret = esp_peer_new_connection(session->peer);
@@ -609,6 +767,9 @@ static void start_peer(struct webrtc_camera *session, command_t *command)
             .size = (int)strlen(command->offer),
         };
         ret = esp_peer_send_msg(session->peer, &offer);
+    }
+    if (ret == ESP_PEER_ERR_NONE && !start_peer_loop(session)) {
+        ret = ESP_PEER_ERR_NO_MEM;
     }
 
     if (ret != ESP_PEER_ERR_NONE) {
@@ -733,7 +894,10 @@ static void session_task(void *arg)
         poll_audio(session);
 
         if (session->peer != NULL) {
+#if !WEBRTC_CAMERA_PEER_LOOP_TASK
             esp_peer_main_loop(session->peer);
+#endif
+            drain_events(session, true);
 
 #if WEBRTC_CAMERA_H264
             /* Independent of the DataChannel: video flows as soon as the peer is connected. */
@@ -801,13 +965,16 @@ esp_err_t webrtc_camera_start(const webrtc_camera_config_t *config, webrtc_camer
     camera_controls_init(&session->controls, config->max_frame_size, config->flash_gpio,
                          config->frame_interval_ms, config->auto_quality);
 
+    atomic_init(&session->loop_running, false);
     session->commands = xQueueCreate(4, sizeof(command_t));
+    session->events = xQueueCreate(EVENT_QUEUE_LEN, sizeof(peer_event_t));
+    session->loop_stopped = xSemaphoreCreateBinary();
     session->answer_ready = xSemaphoreCreateBinary();
     session->answer_lock = xSemaphoreCreateMutex();
     session->offer_lock = xSemaphoreCreateMutex();
 
-    if (session->commands != NULL && session->answer_ready != NULL && session->answer_lock != NULL &&
-        session->offer_lock != NULL &&
+    if (session->commands != NULL && session->events != NULL && session->loop_stopped != NULL &&
+        session->answer_ready != NULL && session->answer_lock != NULL && session->offer_lock != NULL &&
         /* Pinned to core 0, beside Wi-Fi and TLS, so that core 1 belongs to the H.264 encoder
          * alone. Left unpinned it lands on core 1 too, and two busy tasks of equal priority
          * there keep the idle task off the core entirely, which trips the task watchdog and
@@ -820,6 +987,12 @@ esp_err_t webrtc_camera_start(const webrtc_camera_config_t *config, webrtc_camer
 
     if (session->commands != NULL) {
         vQueueDelete(session->commands);
+    }
+    if (session->events != NULL) {
+        vQueueDelete(session->events);
+    }
+    if (session->loop_stopped != NULL) {
+        vSemaphoreDelete(session->loop_stopped);
     }
     if (session->answer_ready != NULL) {
         vSemaphoreDelete(session->answer_ready);
