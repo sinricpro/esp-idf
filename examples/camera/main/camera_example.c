@@ -12,6 +12,10 @@
  *
  * Portal setup: device type Camera -> Camera Stream Configuration: Board "ESP32",
  * Streaming Protocol "WebRTC". Alexa and Google Home streaming is not supported.
+ *
+ * ESP32-P4: the MIPI-CSI camera is served by the p4_camera component, H.264 is encoded in
+ * hardware, and Wi-Fi comes from the board's ESP32-C6 through ESP-Hosted, so the esp_wifi
+ * calls below work unchanged.
  */
 
 #include <stdio.h>
@@ -263,8 +267,8 @@ static bool on_snapshot(const char *device_id, void *user_data)
     if (frame->format == PIXFORMAT_JPEG) {
         err = sinricpro_camera_send_snapshot(s_camera, frame->buf, frame->len);
     } else {
-        /* An H.264 session leaves the sensor in YUV422, so the frame has to be compressed before
-         * it can be uploaded. */
+        /* An H.264 session leaves the camera in the encoder's raw input format (YUV422 on the S3,
+         * BGR888 on the P4), so the frame has to be compressed before it can be uploaded. */
         uint8_t *jpeg = NULL;
         size_t jpeg_len = 0;
         if (frame2jpg(frame, 80, &jpeg, &jpeg_len)) {
@@ -349,10 +353,17 @@ void app_main(void)
     session_config.camera_config = s_camera_config;
 #ifdef CONFIG_CAMERA_H264
     session_config.h264_enabled = true;
+#if CONFIG_IDF_TARGET_ESP32P4
+    /* The hardware encoder runs the sensor's 800x640 mode at 15 fps; viewers can switch to
+     * 1280x960 ("HD", about 11 fps) through the resolution control. */
+    session_config.h264_width = 800;
+    session_config.h264_height = 640;
+#else
     /* Starts at 320x240, which the software encoder sustains at about 10 fps. Viewers can switch
      * to 640x480 through the resolution control, at roughly 1 fps. */
     session_config.h264_width = 320;
     session_config.h264_height = 240;
+#endif
 #endif
 #if CONFIG_IDF_TARGET_ESP32
     /* Once Wi-Fi and the SinricPro TLS socket are up, classic ESP32 has little contiguous

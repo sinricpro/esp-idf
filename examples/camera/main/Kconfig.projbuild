@@ -4,6 +4,7 @@ menu "SinricPro Camera Example"
         prompt "Camera board"
         default CAMERA_BOARD_AI_THINKER if IDF_TARGET_ESP32
         default CAMERA_BOARD_XIAO_S3_SENSE if IDF_TARGET_ESP32S3
+        default CAMERA_BOARD_P4_MIPI_CSI if IDF_TARGET_ESP32P4
         help
             Selects the camera pin mapping. The processor alone does not
             identify the wiring, so choose the actual board.
@@ -38,11 +39,34 @@ menu "SinricPro Camera Example"
         config CAMERA_BOARD_ESP32S3_GOOUUU
             bool "GOOUUU ESP32-S3 camera wiring"
             depends on IDF_TARGET_ESP32S3
+        config CAMERA_BOARD_P4_MIPI_CSI
+            bool "ESP32-P4 board with a MIPI-CSI camera connector"
+            depends on IDF_TARGET_ESP32P4
+            help
+                A 2-lane MIPI-CSI camera such as the OV5647 (Raspberry Pi
+                Camera Rev 1.3). Only the sensor's I2C (SCCB) pins differ
+                between boards; set them below.
     endchoice
+
+    config CAMERA_SCCB_SDA_GPIO
+        int "Camera SCCB (I2C) SDA GPIO"
+        depends on CAMERA_BOARD_P4_MIPI_CSI
+        range 0 54
+        default 7
+        help
+            GPIO7/GPIO8 on the Espressif ESP32-P4-Function-EV-Board and the
+            Waveshare ESP32-P4 boards, where the bus is shared with the
+            audio codec.
+
+    config CAMERA_SCCB_SCL_GPIO
+        int "Camera SCCB (I2C) SCL GPIO"
+        depends on CAMERA_BOARD_P4_MIPI_CSI
+        range 0 54
+        default 8
 
     config CAMERA_FLASH_GPIO
         int "Flash LED GPIO (-1 for none)"
-        range -1 48
+        range -1 54
         default 4 if CAMERA_BOARD_AI_THINKER
         default -1
         help
@@ -50,14 +74,15 @@ menu "SinricPro Camera Example"
 
     config CAMERA_H264
         bool "Stream H.264 video on a WebRTC video track"
-        depends on IDF_TARGET_ESP32S3
+        depends on IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4
         default y
         help
-            Encodes H.264 in software (esp_h264) and sends it on a video track,
-            which plays in a normal video element instead of being reassembled
-            from DataChannel JPEG fragments. Roughly 320x240 at 10 fps is what
-            the S3 sustains. Viewers that ask for no video track, and all other
-            targets, keep the JPEG path.
+            Encodes H.264 (esp_h264) and sends it on a video track, which plays
+            in a normal video element instead of being reassembled from
+            DataChannel JPEG fragments. The S3 encodes in software, roughly
+            320x240 at 10 fps; the P4 encodes in hardware, 800x640 at 15 fps or
+            1280x960 at about 11 fps. Viewers that ask for no video track, and
+            all other targets, keep the JPEG path.
 
     config CAMERA_MICROPHONE
         bool "Stream the onboard PDM microphone"

@@ -15,7 +15,13 @@
 #include "esp_h264_alloc.h"
 #include "esp_h264_enc_param.h"
 #include "esp_h264_enc_single.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "esp_h264_enc_param_hw.h"
+#include "esp_h264_enc_single_hw.h"
+#include "driver/ppa.h"
+#else
 #include "esp_h264_enc_single_sw.h"
+#endif
 #include "esp_log.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -51,9 +57,12 @@ struct h264_streamer {
     QueueHandle_t free_slots;
     QueueHandle_t ready_slots;
     slot_t slots[SLOT_COUNT];
-    /* Used only when the camera hands back a buffer the encoder cannot read directly. */
+    /* Encoder input: the PPA's YUV output on the P4, an aligned copy of an unaligned buffer on the S3. */
     uint8_t *staging;
     uint32_t staging_size;
+#if CONFIG_IDF_TARGET_ESP32P4
+    ppa_client_handle_t ppa;
+#endif
 
     volatile bool running;
     volatile bool keyframe_requested;
@@ -81,23 +90,40 @@ static void close_encoder(h264_streamer_t *streamer)
 static esp_err_t open_encoder(h264_streamer_t *streamer)
 {
     uint8_t fps = streamer->fps > 0 ? streamer->fps : 1;
+#if CONFIG_IDF_TARGET_ESP32P4
+    /* The only input the encoder takes on rev < 3 silicon; filled from the ISP's BGR888 by ppa_convert() */
+    esp_h264_enc_cfg_hw_t cfg = {
+        .pic_type = ESP_H264_RAW_FMT_O_UYY_E_VYY,
+#else
     esp_h264_enc_cfg_sw_t cfg = {
         .pic_type = ESP_H264_RAW_FMT_YUYV,
+#endif
         /* One keyframe per second: a viewer that joins late or loses packets recovers quickly,
-         * which matters because the software encoder cannot produce one on demand. */
+         * which matters because the encoder is only reset, not asked, for one on demand. */
         .gop = fps,
         .fps = fps,
         .res = {.width = streamer->config.width, .height = streamer->config.height},
         .rc = {.bitrate = streamer->config.bitrate, .qp_min = QP_MIN, .qp_max = QP_MAX},
     };
 
-    if (esp_h264_enc_sw_new(&cfg, &streamer->encoder) != ESP_H264_ERR_OK) {
+#if CONFIG_IDF_TARGET_ESP32P4
+    esp_h264_err_t err = esp_h264_enc_hw_new(&cfg, &streamer->encoder);
+#else
+    esp_h264_err_t err = esp_h264_enc_sw_new(&cfg, &streamer->encoder);
+#endif
+    if (err != ESP_H264_ERR_OK) {
         ESP_LOGE(TAG, "Encoder allocation failed for %ux%u", (unsigned)cfg.res.width, (unsigned)cfg.res.height);
         streamer->encoder = NULL;
         return ESP_ERR_NO_MEM;
     }
-    if (esp_h264_enc_sw_get_param_hd(streamer->encoder, &streamer->params) != ESP_H264_ERR_OK ||
-        esp_h264_enc_open(streamer->encoder) != ESP_H264_ERR_OK) {
+#if CONFIG_IDF_TARGET_ESP32P4
+    esp_h264_enc_param_hw_handle_t hw_params = NULL;
+    err = esp_h264_enc_hw_get_param_hd(streamer->encoder, &hw_params);
+    streamer->params = hw_params != NULL ? &hw_params->base : NULL;
+#else
+    err = esp_h264_enc_sw_get_param_hd(streamer->encoder, &streamer->params);
+#endif
+    if (err != ESP_H264_ERR_OK || esp_h264_enc_open(streamer->encoder) != ESP_H264_ERR_OK) {
         ESP_LOGE(TAG, "Encoder open failed");
         close_encoder(streamer);
         return ESP_FAIL;
@@ -107,6 +133,7 @@ static esp_err_t open_encoder(h264_streamer_t *streamer)
     return ESP_OK;
 }
 
+#if !CONFIG_IDF_TARGET_ESP32P4
 /* openh264 reads the input plane in 16-byte steps, so an unaligned camera buffer is copied. */
 static uint8_t *aligned_input(h264_streamer_t *streamer, const camera_fb_t *frame)
 {
@@ -124,7 +151,110 @@ static uint8_t *aligned_input(h264_streamer_t *streamer, const camera_fb_t *fram
     memcpy(streamer->staging, frame->buf, frame->len);
     return streamer->staging;
 }
+#endif
 
+static bool encode_input(h264_streamer_t *streamer, slot_t *slot, uint8_t *input, uint32_t len, uint32_t pts)
+{
+    esp_h264_enc_in_frame_t in = {
+        .raw_data = {.buffer = input, .len = len},
+        .pts = pts,
+    };
+    esp_h264_enc_out_frame_t out = {
+        .raw_data = {.buffer = slot->data, .len = slot->capacity},
+    };
+    esp_h264_err_t err = esp_h264_enc_process(streamer->encoder, &in, &out);
+    if (err != ESP_H264_ERR_OK || out.length == 0 || out.length > slot->capacity) {
+        ESP_LOGW(TAG, "Encode failed: %d, %u bytes", (int)err, (unsigned)out.length);
+        return false;
+    }
+    slot->size = out.length;
+    slot->pts = pts;
+    return true;
+}
+
+#if CONFIG_IDF_TARGET_ESP32P4
+/* The PPA writes through the L2 cache, so its output buffer and length align to that line size */
+#define PPA_ALIGN 128
+
+static bool ppa_prepare(h264_streamer_t *streamer, uint32_t len)
+{
+    if (streamer->ppa == NULL) {
+        ppa_client_config_t client = {.oper_type = PPA_OPERATION_SRM, .max_pending_trans_num = 1};
+        if (ppa_register_client(&client, &streamer->ppa) != ESP_OK) {
+            streamer->ppa = NULL;
+            return false;
+        }
+    }
+    const uint32_t alloc_len = (len + PPA_ALIGN - 1) & ~(uint32_t)(PPA_ALIGN - 1);
+    if (streamer->staging == NULL || streamer->staging_size < alloc_len) {
+        esp_h264_free(streamer->staging);
+        streamer->staging_size = 0;
+        streamer->staging = esp_h264_aligned_calloc(PPA_ALIGN, 1, alloc_len, &streamer->staging_size, MALLOC_CAP_SPIRAM);
+    }
+    return streamer->staging != NULL;
+}
+
+/*
+ * BGR888 to packed YUV420 (limited range BT.601) on the PPA. This is the only input the encoder
+ * takes on rev < 3 silicon; the ISP can output the layout itself, but there its chroma decodes
+ * green and nearly colourless. Conversion and encoding run back to back rather than overlapped:
+ * both are PSRAM bound, so overlapping saved only ~5 ms per HD frame.
+ */
+static bool ppa_convert(h264_streamer_t *streamer, const camera_fb_t *frame)
+{
+    ppa_srm_oper_config_t op = {
+        .in = {
+            .buffer = frame->buf, .pic_w = frame->width, .pic_h = frame->height,
+            .block_w = frame->width, .block_h = frame->height,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+        },
+        .out = {
+            .buffer = streamer->staging, .buffer_size = streamer->staging_size,
+            .pic_w = frame->width, .pic_h = frame->height,
+            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        },
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+        .scale_x = 1.0f,
+        .scale_y = 1.0f,
+        .mode = PPA_TRANS_MODE_BLOCKING,
+    };
+    esp_err_t err = ppa_do_scale_rotate_mirror(streamer->ppa, &op);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "PPA conversion failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    return true;
+}
+
+static bool encode_frame(h264_streamer_t *streamer, slot_t *slot)
+{
+    camera_fb_t *frame = esp_camera_fb_get();
+    if (frame == NULL) {
+        return false;
+    }
+    if (frame->format != PIXFORMAT_RGB888) {
+        ESP_LOGW(TAG, "Camera is not in the encoder's input mode");
+        esp_camera_fb_return(frame);
+        return false;
+    }
+    // The encoder is built for the mode's size; a sensor whose native modes differ cannot feed it
+    if (frame->width != streamer->config.width || frame->height != streamer->config.height) {
+        ESP_LOGE(TAG, "Camera delivers %ux%u, the encoder expects %ux%u", (unsigned)frame->width,
+                 (unsigned)frame->height, (unsigned)streamer->config.width, (unsigned)streamer->config.height);
+        esp_camera_fb_return(frame);
+        return false;
+    }
+
+    const uint32_t len = (uint32_t)(frame->width * frame->height * 3 / 2);
+    const uint32_t pts = webrtc_camera_now_ms() - streamer->started_ms;
+    bool converted = ppa_prepare(streamer, len) && ppa_convert(streamer, frame);
+    // The converted copy is all the encoder needs, so the camera gets its buffer back early
+    esp_camera_fb_return(frame);
+    return converted && encode_input(streamer, slot, streamer->staging, len, pts);
+}
+#else
 static bool encode_frame(h264_streamer_t *streamer, slot_t *slot)
 {
     camera_fb_t *frame = esp_camera_fb_get();
@@ -134,31 +264,18 @@ static bool encode_frame(h264_streamer_t *streamer, slot_t *slot)
 
     bool encoded = false;
     if (frame->format != PIXFORMAT_YUV422) {
-        ESP_LOGW(TAG, "Camera is not in YUV422 mode");
+        ESP_LOGW(TAG, "Camera is not in the encoder's input mode");
     } else {
         uint8_t *input = aligned_input(streamer, frame);
         if (input != NULL) {
-            esp_h264_enc_in_frame_t in = {
-                .raw_data = {.buffer = input, .len = frame->len},
-                .pts = webrtc_camera_now_ms() - streamer->started_ms,
-            };
-            esp_h264_enc_out_frame_t out = {
-                .raw_data = {.buffer = slot->data, .len = slot->capacity},
-            };
-            esp_h264_err_t err = esp_h264_enc_process(streamer->encoder, &in, &out);
-            if (err == ESP_H264_ERR_OK && out.length > 0 && out.length <= slot->capacity) {
-                slot->size = out.length;
-                slot->pts = in.pts;
-                encoded = true;
-            } else {
-                ESP_LOGW(TAG, "Encode failed: %d, %u bytes", (int)err, (unsigned)out.length);
-            }
+            encoded = encode_input(streamer, slot, input, frame->len,
+                                   webrtc_camera_now_ms() - streamer->started_ms);
         }
     }
-
     esp_camera_fb_return(frame);
     return encoded;
 }
+#endif
 
 static void encode_task(void *arg)
 {
@@ -228,6 +345,11 @@ static void free_streamer(h264_streamer_t *streamer)
         esp_h264_free(streamer->slots[i].data);
     }
     esp_h264_free(streamer->staging);
+#if CONFIG_IDF_TARGET_ESP32P4
+    if (streamer->ppa != NULL) {
+        ppa_unregister_client(streamer->ppa);
+    }
+#endif
     if (streamer->free_slots != NULL) {
         vQueueDelete(streamer->free_slots);
     }

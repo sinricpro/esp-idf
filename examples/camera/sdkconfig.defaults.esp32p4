@@ -1,0 +1,22 @@
+# Chip revision: ESP-IDF builds for ESP32-P4 v3.0 and later by default. Boards with a v1.x chip
+# (the boot log prints "chip revision: v1.3") need this line uncommented, or the bootloader
+# refuses to start. A build for one range does not run on the other.
+# CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+
+CONFIG_SPIRAM_SPEED_200M=y
+
+# Wi-Fi from the board's ESP32-C6 running ESP-Hosted, on the P4's SDIO defaults (CLK 18, CMD 19,
+# D0-D3 14-17, C6 reset on GPIO54), as on the ESP32-P4-Function-EV-Board and the Waveshare
+# ESP32-P4 Wi-Fi boards. The C6 has to run the ESP-Hosted co-processor firmware; these boards
+# ship with it.
+CONFIG_ESP_HOSTED=y
+CONFIG_ESP_HOSTED_HOST_FEAT_RPC=y
+CONFIG_ESP_HOSTED_HOST_FEAT_RPC_EXT_V2=y
+CONFIG_ESP_HOSTED_HOST_FEAT_SYSTEM=y
+CONFIG_ESP_HOSTED_HOST_FEAT_WIFI=y
+
+# Camera: OV5647 (Raspberry Pi Camera Rev 1.3 and compatibles). The H.264 modes are its native
+# 800x640 and 1280x960 binned modes.
+CONFIG_CAMERA_OV5647=y
+CONFIG_CAMERA_OV5647_MIPI_RAW8_800X640_50FPS=y
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1280X960_BINNING_45FPS=y
