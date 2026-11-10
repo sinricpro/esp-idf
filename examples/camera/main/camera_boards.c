@@ -19,8 +19,10 @@ camera_config_t camera_board_config(void)
         .pin_pwdn = -1,
         .pin_reset = -1,
         .xclk_freq_hz = 20000000,
+#if !CONFIG_CAMERA_BOARD_P4_MIPI_CSI
         .ledc_timer = LEDC_TIMER_0,
         .ledc_channel = LEDC_CHANNEL_0,
+#endif
         .pixel_format = PIXFORMAT_JPEG,
         .frame_size = FRAMESIZE_VGA,
         .jpeg_quality = 16,
@@ -145,6 +147,14 @@ camera_config_t camera_board_config(void)
 #if CONFIG_CAMERA_BOARD_ESP32S3_WROOM
     camera.pin_pwdn = 38;
 #endif
+#elif CONFIG_CAMERA_BOARD_P4_MIPI_CSI
+    /* Pixel data travels over MIPI-CSI, so only the sensor's control bus needs pins. The sensor
+     * has its own oscillator; xclk_freq_hz just has to be non-zero for the H.264 session. */
+    camera.pin_xclk = -1;
+    camera.pin_sccb_sda = CONFIG_CAMERA_SCCB_SDA_GPIO;
+    camera.pin_sccb_scl = CONFIG_CAMERA_SCCB_SCL_GPIO;
+    camera.xclk_freq_hz = 24000000;
+    camera.jpeg_quality = 12;
 #endif
 
     return camera;
@@ -172,6 +182,8 @@ const char *camera_board_name(void)
     return "ESP32-S3 WROOM (PWDN 38)";
 #elif CONFIG_CAMERA_BOARD_ESP32S3_GOOUUU
     return "GOOUUU ESP32-S3";
+#elif CONFIG_CAMERA_BOARD_P4_MIPI_CSI
+    return "ESP32-P4 MIPI-CSI camera";
 #else
     return "Unknown camera board";
 #endif

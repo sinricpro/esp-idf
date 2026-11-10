@@ -15,11 +15,11 @@
 #include "esp_peer.h"
 #include "freertos/FreeRTOS.h"
 
-/* H.264 video track for ESP32-S3, where esp_h264 encodes in software.
+/* H.264 video track: esp_h264 encodes in software on the ESP32-S3 and in hardware on the ESP32-P4.
  *
- * The camera delivers YUV422 (YUYV), one of the two formats the software encoder accepts, so
- * frames go from the camera buffer into the encoder untouched. esp_peer packetises each encoded
- * frame into RTP.
+ * On the S3 the camera delivers the encoder's native YUV422 YUYV, read in place. On the P4 the
+ * ISP's BGR888 is converted to packed YUV420 (O_UYY_E_VYY) by the PPA first.
+ * esp_peer packetises each encoded frame into RTP.
  *
  * A QVGA frame costs roughly 90 ms to encode, which is why this runs on its own task: the session
  * task has to stay free for ICE, DTLS and the 20 ms audio pump. Encoded frames cross between the
